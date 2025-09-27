@@ -49,11 +49,10 @@ def build_release_prompt(knowledge_base, engineering_note):
         task_instruction = f"**Task:** Write the release note following this instruction:\n\"{style_guide['feature_enhancement_writing']['instruction']}\""
     
     prompt = f"""
-    You are a Principal Technical Writer at Alation, following the Microsoft Style Guide for professional and clear communication. Your task is to convert a raw engineering note into a formal, customer-facing release note.
+    You are a Principal Technical Writer at Alation, following the Microsoft Style Guide for professional and clear communication.
 
     ---
     **CRITICAL WRITING RULES:**
-
     1.  **Professional Tone:** You MUST adopt a neutral and professional tone. **DO NOT** use overly enthusiastic or marketing-focused phrases like "We are excited to announce," "We are pleased to introduce," or "We're happy to share." State the facts directly.
     2.  **Terminology Substitution:** You MUST replace internal codenames with their official public-facing terms.
         - If you see "Neo", "New UI", or "Neo UI", replace it with **"New User Experience"**.
@@ -74,8 +73,9 @@ def build_release_prompt(knowledge_base, engineering_note):
 # --- Main Application Logic ---
 st.title("Interactive Release Notes Assistant 🚀")
 
+# --- CORRECTED: Initialize all session state variables ---
 if 'final_report' not in st.session_state: st.session_state.final_report = None
-if 'summary_data' not in st.session_state: st.session_state.summary_data = None
+if 'classified_data' not in st.session_state: st.session_state.classified_data = None
 
 with st.sidebar:
     st.header("⚙️ Configuration")
@@ -160,8 +160,8 @@ if st.session_state.classified_data is not None:
             progress_bar = st.progress(0, text="Writing notes...")
             total_to_write = len(approved_df)
             
-            for index, row in approved_df.iterrows():
-                progress_bar.progress((index + 1) / total_to_write, text=f"Writing: {row.get('Summary', '')[:30]}...")
+            for i, (index, row) in enumerate(approved_df.iterrows()):
+                progress_bar.progress((i + 1) / total_to_write, text=f"Writing: {row.get('Summary', '')[:30]}...")
                 eng_note = row.to_dict()
                 writer_prompt = build_release_prompt(RELEASE_KNOWLEDGE_BASE, eng_note)
                 try:
