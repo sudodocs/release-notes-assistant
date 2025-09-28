@@ -6,6 +6,7 @@ from datetime import datetime
 from collections import defaultdict
 import fitz  # PyMuPDF
 import io
+import requests # FIXED: Imported the missing 'requests' library
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Interactive Release Notes Assistant", layout="wide")
@@ -16,7 +17,7 @@ def load_knowledge_base(url):
     """Fetches and loads a JSON knowledge base from a user-provided URL."""
     try:
         response = requests.get(url)
-        response.raise_for_status()
+        response.raise_for_status() # This will raise an error for bad responses (4xx or 5xx)
         return response.json()
     except Exception as e:
         st.error(f"Error loading Knowledge Base from URL. Please check the URL and file format. Details: {e}")
@@ -37,16 +38,16 @@ if 'final_report' not in st.session_state: st.session_state.final_report = None
 with st.expander("⚙️ **Configuration**", expanded=True):
     st.info("Please provide your API key, the URL to your knowledge base, and the release details.")
     api_key = st.text_input("Enter your OpenAI API Key", type="password", placeholder="Enter your OpenAI API Key")
-    # Alation-specific KB URL provided as a default example
-    kb_url = st.text_input("Knowledge Base URL", "https://raw.githubusercontent.com/mrsauravs/release-notes-assistant/refs/heads/main/knowledge_base.json")
-    
+    # FIXED: Removed the hard-coded default URL and replaced it with a helpful placeholder
+    kb_url = st.text_input("Knowledge Base URL", placeholder="https://example.com/path/to/your/knowledge_base.json")
+
     col1, col2, col3 = st.columns(3)
     with col1: release_version = st.text_input("Release Version", "2025.3.1")
     with col2: build_number = st.text_input("Build Number", "2409")
     with col3: release_date = st.text_input("Release Date", "September 28, 2025")
 
-# Load the knowledge base once
-KNOWLEDGE_BASE = load_knowledge_base(kb_url) if kb_url and "github" in kb_url else None
+# FIXED: Removed the specific 'github' check to allow any valid URL
+KNOWLEDGE_BASE = load_knowledge_base(kb_url) if kb_url else None
 
 with st.container(border=True):
     st.header("Step 1: Upload Your Content Files")
@@ -73,7 +74,7 @@ with st.container(border=True):
                         processed_rows += 1
                         progress_bar.progress(processed_rows / total_rows, text=f"Processing {name}: {row.get('Summary', '')[:30]}...")
                         eng_note = row.to_dict()
-                        
+
                         publicity_prompt = get_prompt(KNOWLEDGE_BASE, 'classifier_publicity', summary=eng_note.get("Summary", ""), issue_type=eng_note.get("Issue Type", ""))
                         try:
                             response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": publicity_prompt}], max_tokens=5, temperature=0)
@@ -86,16 +87,16 @@ with st.container(border=True):
                                 cat_response = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": categorizer_prompt}])
                                 cat_json = json.loads(cat_response.choices[0].message.content)
                                 eng_note['Category'] = cat_json.get('category', 'Other')
-                                
+
                                 public_items_raw.append(eng_note)
                         except Exception as e:
                             st.warning(f"Could not process {eng_note.get('Summary')}: {e}")
-                
+
                 df_public = pd.DataFrame(public_items_raw).fillna('')
                 df_public['Include'] = True
                 public_epic_keys = set(df_public[df_public['Issue Type'] == 'Epic']['Key'])
                 df_public['Include'] = df_public.apply(lambda row: False if row['Issue Type'] == 'Story' and row['parent'] in public_epic_keys else True, axis=1)
-                
+
                 st.session_state.processed_data = df_public
                 st.success(f"Triage complete. Found {len(df_public)} potentially public items for your review.")
 
@@ -103,7 +104,7 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
     with st.container(border=True):
         st.header("Step 2: Review and Approve Items")
         st.warning("Uncheck items to exclude them. You can also correct the AI-suggested Deployment and Category.")
-        
+
         edited_df = st.data_editor(
             st.session_state.processed_data,
             column_config={
@@ -114,7 +115,7 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
             disabled=["Key", "Summary", "Issue Type", "parent", "Description"],
             height=400, use_container_width=True
         )
-        
+
         approved_df = edited_df[edited_df['Include']]
         st.info(f"You have selected **{len(approved_df)}** items to include in the release notes.")
 
@@ -124,14 +125,14 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                 client = openai.OpenAI(api_key=api_key)
                 features_by_category = defaultdict(list)
                 bugs_by_category = defaultdict(list)
-                
+
                 progress_bar = st.progress(0, text="Writing Final Notes...")
                 total_to_write = len(approved_df)
-                
+
                 for i, (index, row) in enumerate(approved_df.iterrows()):
                     progress_bar.progress((i + 1) / total_to_write, text=f"Writing: {row.get('Summary', '')[:30]}...")
                     eng_note = row.to_dict()
-                    
+
                     style = KNOWLEDGE_BASE['writing_style_guide']
                     issue_type = eng_note.get("Issue Type", "Feature").lower()
                     category = eng_note.get('Category', 'Other')
@@ -149,11 +150,11 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                         note_json=json.dumps(eng_note, indent=2),
                         task_instruction=task_instruction
                     )
-                    
+
                     try:
                         writer_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": writer_prompt}])
                         suggestion = writer_response.choices[0].message.content.strip()
-                        
+
                         if "bug" in issue_type or "escalation" in issue_type:
                             final_category = "Other Fixes" if category == "Other" else category
                             bugs_by_category[final_category].append(suggestion)
@@ -170,9 +171,9 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                 main_title = f"# Release {release_version} (Build {build_number})"
                 date_subtitle = f"_{release_date}_"
                 report_parts = [main_title, date_subtitle]
-                
+
                 kb_sections = KNOWLEDGE_BASE['release_structure']['main_sections']
-                
+
                 if features_by_category:
                     report_parts.append(f"\n\n**{kb_sections['features']}**\n")
                     for cat_key in KNOWLEDGE_BASE['product_categories']:
@@ -192,7 +193,7 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                     if "Other Fixes" in bugs_by_category:
                          report_parts.append(f"\n### Other Fixes\n")
                          report_parts.append("\n".join(bugs_by_category["Other Fixes"]))
-                
+
                 st.session_state.final_report = "\n".join(report_parts)
                 st.success("✅ Release notes document generated successfully!")
 
@@ -209,4 +210,3 @@ if st.session_state.final_report:
             type="primary",
             use_container_width=True
         )
-
