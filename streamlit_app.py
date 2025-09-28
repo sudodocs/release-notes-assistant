@@ -31,41 +31,46 @@ def get_prompt(kb, template_name, **kwargs):
 def convert_md_to_rst(md_text, release_version):
     """Converts a Markdown string to a reStructuredText string."""
     rst_text = md_text
-    
-    # --- Create Cross-Reference Labels and TOC ---
     toc_entries = []
-    # Find all h3 headers (categories) to create labels and TOC
-    h3_headers = re.findall(r"### (.*)", rst_text)
-    
-    def create_label(title):
-        label_part = title.lower().replace(' ', '-')
-        return f".. _{label-part}-{release_version.split('.')[0]}{release_version.split('.')[1]}:"
 
-    for header in h3_headers:
-        label = create_label(header)
-        rst_text = rst_text.replace(f"### {header}", f"{label}\n\n{header}\n{'~'*len(header)}")
-        toc_entries.append(f"- :ref:`{header} <{header.lower().replace(' ', '-')}-{release_version.split('.')[0]}{release_version.split('.')[1]}>`")
+    # A helper function to create a valid RST label and TOC entry from a header title
+    def create_label_and_toc(header_title):
+        # Sanitize the title for the label, e.g., "Content Experience" -> "content-experience"
+        sanitized_title = header_title.lower().replace(' ', '-')
+        # Create short version string, e.g., "2025.3.1" -> "20253"
+        version_parts = release_version.split('.')
+        short_version = f"{version_parts[0]}{version_parts[1]}"
+        
+        # Create the final RST label and TOC reference
+        label = f".. _{sanitized_title}-{short_version}:"
+        toc_entry = f"- :ref:`{header_title} <{sanitized_title}-{short_version}>`"
+        return label, toc_entry
 
-    # --- Convert Headers ---
-    # H1: Title
+    # This function is used by re.sub to replace each Markdown H3 header
+    def header_replacer(match):
+        header = match.group(1)
+        label, toc_entry = create_label_and_toc(header)
+        toc_entries.append(toc_entry)
+        # Return the RST-formatted header with its label
+        return f"{label}\n\n{header}\n{'~'*len(header)}"
+
+    # Find all H3 headers (### Category) and replace them using the function above
+    rst_text = re.sub(r"### (.*)", header_replacer, rst_text)
+
+    # Convert H1 (# Title) and H2 (## Section) headers
     rst_text = re.sub(r"# (.*)", lambda m: f"{m.group(1)}\n{'='*len(m.group(1))}", rst_text)
-    # H2: Main Sections
     rst_text = re.sub(r"## (.*)", lambda m: f"{m.group(1)}\n{'-'*len(m.group(1))}", rst_text)
-    # Note: H3 is handled above to include labels
+    
+    # Convert _italics_ to *italics* for RST compatibility
+    rst_text = re.sub(r"_(.*?)_", r"*\1*", rst_text)
 
-    # --- Convert Bold and Italics ---
-    # RST uses the same syntax for bold (**text**) and italics (*text*), so no change needed for basic cases.
-    # Markdown italics _text_ needs to be converted if used.
-    rst_text = re.sub(r"_(.*)_", r"*\1*", rst_text)
-
-    # --- Insert TOC ---
+    # Insert the generated Table of Contents after the date line
     if toc_entries:
         toc_block = "In this release:\n\n" + "\n".join(toc_entries)
-        # Find the release date line to insert the TOC after it
-        match = re.search(r"(\n\n)", rst_text)
-        if match:
-            insertion_point = match.end()
-            rst_text = rst_text[:insertion_point] + toc_block + "\n\n" + rst_text[insertion_point:]
+        # Split the document just after the title and date to insert the TOC
+        parts = rst_text.split('\n', 2)
+        if len(parts) > 2:
+            rst_text = f"{parts[0]}\n{parts[1]}\n\n{toc_block}\n\n{parts[2]}"
 
     return rst_text
 
