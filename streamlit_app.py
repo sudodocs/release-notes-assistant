@@ -10,35 +10,25 @@ import io
 # --- Page Configuration ---
 st.set_page_config(page_title="Interactive Release Notes Assistant 🚀", layout="wide")
 
-# --- CORRECTED: Simplified CSS for a clean and robust UI ---
+# --- SAFER: Custom CSS for improved UX, with the conflicting font rule removed ---
 st.markdown("""
 <style>
-    /* Main font and background */
-    html, body, [class*="st-"] {
-        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-    }
     .stApp {
         background-color: #f0f2f6;
     }
-
-    /* Headers for clear hierarchy */
     h1, h2, h3 {
         font-weight: 600;
-        color: #1E293B; /* Darker text for better contrast */
+        color: #1E293B;
     }
-
-    /* Primary CTA button styling */
     .stButton > button[kind="primary"] {
         background-color: #0068c9;
         font-weight: 600;
         border-radius: 8px;
         transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
     }
-    
     .stButton > button[kind="primary"]:hover {
         background-color: #00509a;
     }
-
 </style>
 """, unsafe_allow_html=True)
 
@@ -156,7 +146,6 @@ with st.expander("⚙️ **Configuration**", expanded=True):
     with col3:
         release_date = st.text_input("Release Date", "September 28, 2025")
 
-# --- CORRECTED: Using st.container with border for a robust layout ---
 with st.container(border=True):
     st.header("Step 1: Upload Your Content Files")
     col1, col2, col3, col4 = st.columns(4)
