@@ -6,7 +6,7 @@ from datetime import datetime
 from collections import defaultdict
 import fitz  # PyMuPDF
 import io
-import requests # FIXED: Imported the missing 'requests' library
+import requests
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Interactive Release Notes Assistant", layout="wide")
@@ -17,7 +17,7 @@ def load_knowledge_base(url):
     """Fetches and loads a JSON knowledge base from a user-provided URL."""
     try:
         response = requests.get(url)
-        response.raise_for_status() # This will raise an error for bad responses (4xx or 5xx)
+        response.raise_for_status()  # This will raise an error for bad responses (4xx or 5xx)
         return response.json()
     except Exception as e:
         st.error(f"Error loading Knowledge Base from URL. Please check the URL and file format. Details: {e}")
@@ -38,7 +38,6 @@ if 'final_report' not in st.session_state: st.session_state.final_report = None
 with st.expander("⚙️ **Configuration**", expanded=True):
     st.info("Please provide your API key, the URL to your knowledge base, and the release details.")
     api_key = st.text_input("Enter your OpenAI API Key", type="password", placeholder="Enter your OpenAI API Key")
-    # FIXED: Removed the hard-coded default URL and replaced it with a helpful placeholder
     kb_url = st.text_input("Knowledge Base URL", placeholder="https://example.com/path/to/your/knowledge_base.json")
 
     col1, col2, col3 = st.columns(3)
@@ -46,7 +45,7 @@ with st.expander("⚙️ **Configuration**", expanded=True):
     with col2: build_number = st.text_input("Build Number", "2409")
     with col3: release_date = st.text_input("Release Date", "September 28, 2025")
 
-# FIXED: Removed the specific 'github' check to allow any valid URL
+# Load the knowledge base once
 KNOWLEDGE_BASE = load_knowledge_base(kb_url) if kb_url else None
 
 with st.container(border=True):
@@ -110,7 +109,7 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
             column_config={
                 "Include": st.column_config.CheckboxColumn("Include?", default=True),
                 "Deployment": st.column_config.SelectboxColumn("Deployment", options=["Both", "Cloud Only", "On-Premise Only"], required=True),
-                "Category": st.column_config.SelectboxColumn("Category", options=list(KNOWLEDGE_BASE['product_categories'].keys()), required=True)
+                "Category": st.column_config.SelectboxColumn("Category", options=list(KNOWLEDGE_BASE['product_categories'].keys()) + ['Other'], required=True)
             },
             disabled=["Key", "Summary", "Issue Type", "parent", "Description"],
             height=400, use_container_width=True
@@ -120,7 +119,8 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
         st.info(f"You have selected **{len(approved_df)}** items to include in the release notes.")
 
         if st.button("2️⃣ Generate Document for Approved Items", type="primary", use_container_width=True):
-            if not api_key: st.error("Please enter your OpenAI API key.")
+            if not api_key:
+                st.error("Please enter your OpenAI API key.")
             else:
                 client = openai.OpenAI(api_key=api_key)
                 features_by_category = defaultdict(list)
@@ -137,8 +137,10 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                     issue_type = eng_note.get("Issue Type", "Feature").lower()
                     category = eng_note.get('Category', 'Other')
 
-                    if "bug" in issue_type or "escalation" in issue_type: task_instruction = style['bug_fix_writing']['instruction']
-                    else: task_instruction = style['feature_enhancement_writing']['instruction']
+                    if "bug" in issue_type or "escalation" in issue_type:
+                        task_instruction = style['bug_fix_writing']['instruction']
+                    else:
+                        task_instruction = style['feature_enhancement_writing']['instruction']
 
                     writer_prompt = get_prompt(KNOWLEDGE_BASE, 'writer',
                         company_name=KNOWLEDGE_BASE['company_name'],
@@ -160,9 +162,12 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                             bugs_by_category[final_category].append(suggestion)
                         else:
                             if category == "Other":
-                                try: final_category = suggestion.split('\n')[0].replace('**', '').strip()
-                                except IndexError: final_category = eng_note.get('Summary', 'Uncategorized Feature')
-                            else: final_category = category
+                                try:
+                                    final_category = suggestion.split('\n')[0].replace('**', '').strip()
+                                except IndexError:
+                                    final_category = eng_note.get('Summary', 'Uncategorized Feature')
+                            else:
+                                final_category = category
                             features_by_category[final_category].append(suggestion)
                     except Exception as e:
                         st.warning(f"Could not write note for {row.get('Summary')}: {e}")
@@ -174,25 +179,60 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
 
                 kb_sections = KNOWLEDGE_BASE['release_structure']['main_sections']
 
+                # --- START: MODIFIED BLOCK FOR FEATURE ASSEMBLY ---
                 if features_by_category:
                     report_parts.append(f"\n\n## {kb_sections['features']}\n")
-                    for cat_key in KNOWLEDGE_BASE['product_categories']:
-                        if cat_key in features_by_category:
-                            report_parts.append(f"\n### {cat_key}\n")
-                            report_parts.append("\n\n".join(features_by_category.pop(cat_key)))
-                    for cat_key, notes in features_by_category.items():
+
+                    # Helper function to clean and normalize text for accurate comparison.
+                    def normalize_text(text):
+                        return text.replace('####', '').replace('###', '').replace('**', '').strip().lower()
+
+                    # Logic to ensure a consistent, predictable order of categories in the report.
+                    all_feature_categories = list(features_by_category.keys())
+                    ordered_categories = [cat for cat in KNOWLEDGE_BASE['product_categories'] if cat in all_feature_categories]
+                    remaining_categories = [cat for cat in all_feature_categories if cat not in KNOWLEDGE_BASE['product_categories']]
+                    final_category_order = ordered_categories + remaining_categories
+
+                    for cat_key in final_category_order:
+                        if cat_key not in features_by_category:
+                            continue
+
+                        notes = features_by_category[cat_key]
                         report_parts.append(f"\n### {cat_key}\n")
-                        report_parts.append("\n\n".join(notes))
+                        processed_notes = []
+                        normalized_cat_key = normalize_text(cat_key)
+
+                        for note in notes:
+                            lines = note.strip().split('\n')
+                            if not lines:
+                                continue
+
+                            title_line = lines[0]
+                            normalized_title = normalize_text(title_line)
+
+                            # The core redundancy check.
+                            # If the category header and feature title are the same, skip the title.
+                            if normalized_cat_key == normalized_title:
+                                processed_notes.append("\n".join(lines[1:]).strip())
+                            else:
+                                # Otherwise, keep the entire note with its title.
+                                processed_notes.append(note)
+
+                        report_parts.append("\n\n".join(processed_notes))
+                # --- END: MODIFIED BLOCK FOR FEATURE ASSEMBLY ---
 
                 if bugs_by_category:
                     report_parts.append(f"\n\n## {kb_sections['bugs']}\n")
+                    # Ensure defined categories are processed first
                     for cat_key in KNOWLEDGE_BASE['product_categories']:
-                         if cat_key in bugs_by_category:
+                        if cat_key in bugs_by_category:
                             report_parts.append(f"\n### {cat_key}\n")
-                            report_parts.append("\n".join(bugs_by_category.pop(cat_key)))
-                    if "Other Fixes" in bugs_by_category:
-                         report_parts.append(f"\n### Other Fixes\n")
-                         report_parts.append("\n".join(bugs_by_category["Other Fixes"]))
+                            # Explicitly add '-' for bullet points
+                            report_parts.append("\n".join([note if note.strip().startswith('-') else f"- {note}" for note in bugs_by_category.pop(cat_key)]))
+                    # Process any remaining bug categories (like 'Other Fixes')
+                    for cat_key, notes in sorted(bugs_by_category.items()):
+                        report_parts.append(f"\n### {cat_key}\n")
+                        report_parts.append("\n".join([note if note.strip().startswith('-') else f"- {note}" for note in notes]))
 
                 st.session_state.final_report = "\n".join(report_parts)
                 st.success("✅ Release notes document generated successfully!")
