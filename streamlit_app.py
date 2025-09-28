@@ -176,7 +176,7 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
         approved_df = edited_df[edited_df['Include']]
         st.info(f"You have selected **{len(approved_df)}** items to include in the release notes.")
 
-        if st.button("2️⃣ Generate Document for Approved Items", type="primary", use_container_width=True):
+       if st.button("2️⃣ Generate Document for Approved Items", type="primary", use_container_width=True):
             if not api_key:
                 st.error("Please enter your OpenAI API key.")
             else:
@@ -188,7 +188,6 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                 total_to_write = len(approved_df)
 
                 for i, (index, row) in enumerate(approved_df.iterrows()):
-                    # ... (AI writing logic is unchanged) ...
                     progress_bar.progress((i + 1) / total_to_write, text=f"Writing: {row.get('Summary', '')[:30]}...")
                     eng_note = row.to_dict()
 
@@ -200,25 +199,51 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                         task_instruction = style['bug_fix_writing']['instruction']
                     else:
                         task_instruction = style['feature_enhancement_writing']['instruction']
-
+                    
+                    # MODIFIED: Removed the old 'cloud_instruction' from the prompt
                     writer_prompt = get_prompt(KNOWLEDGE_BASE, 'writer',
                         company_name=KNOWLEDGE_BASE['company_name'],
                         category=category,
                         professional_tone_rule=style['professional_tone_rule'],
                         terminology_rules_json=json.dumps(style['terminology_rules']),
-                        cloud_instruction=f"If the deployment type is 'Cloud Only', you MUST add the suffix '{KNOWLEDGE_BASE['cloud_native_identifier']['suffix_to_add']}' at the very end of the note, after the Jira key.",
                         category_specific_instruction=style['category_specific_rules'].get(category, ""),
                         note_json=json.dumps(eng_note, indent=2),
                         task_instruction=task_instruction
                     )
-                    
+
                     try:
                         writer_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": writer_prompt}])
                         suggestion = writer_response.choices[0].message.content.strip()
 
+                        # --- NEW: Logic to append Jira Key and Deployment Text ---
+                        jira_key = row.get('Key', '')
+                        deployment_type = row.get('Deployment', 'Both')
+                        deployment_map = KNOWLEDGE_BASE.get('deployment_text_mapping', {})
+                        
+                        final_note_parts = [suggestion] # Start with AI-written text
+
+                        # Part 1: Description and Jira Key
+                        if jira_key:
+                            final_note_parts.append(f"({jira_key})")
+                        
+                        # Part 2: Bug Fix Suffix (Cloud Only)
+                        if ("bug" in issue_type or "escalation" in issue_type) and (deployment_type in ["Cloud Only", "Both"]):
+                            bug_suffix = deployment_map.get('bug_fix_cloud_suffix', '')
+                            if bug_suffix:
+                                final_note_parts.append(bug_suffix)
+                        
+                        final_note_text = " ".join(final_note_parts)
+
+                        # Part 3: Feature Deployment Text (On a new line)
+                        if not ("bug" in issue_type or "escalation" in issue_type):
+                            feature_text = deployment_map.get(deployment_type, '')
+                            if feature_text:
+                                final_note_text += f"\n\n*{feature_text}*"
+                        # --- END: New Logic ---
+
                         if "bug" in issue_type or "escalation" in issue_type:
                             final_category = "Other Fixes" if category == "Other" else category
-                            bugs_by_category[final_category].append(suggestion)
+                            bugs_by_category[final_category].append(final_note_text)
                         else:
                             if category == "Other":
                                 try:
@@ -227,10 +252,10 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                                     final_category = eng_note.get('Summary', 'Uncategorized Feature')
                             else:
                                 final_category = category
-                            features_by_category[final_category].append(suggestion)
+                            features_by_category[final_category].append(final_note_text)
                     except Exception as e:
                         st.warning(f"Could not write note for {row.get('Summary')}: {e}")
-
+                
                 # Document Assembly
                 main_title = f"# Release {release_version} (Build {build_number})"
                 date_subtitle = f"_{release_date}_"
