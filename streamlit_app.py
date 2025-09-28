@@ -4,9 +4,70 @@ import json
 import openai
 from datetime import datetime
 from collections import defaultdict
+import fitz  # PyMuPDF
+import io
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Intelligent Release Notes Assistant", layout="wide")
+st.set_page_config(page_title="Interactive Release Notes Assistant", layout="wide")
+
+# --- NEW: Custom CSS for improved UX ---
+st.markdown("""
+<style>
+    /* Main font and background */
+    html, body, [class*="st-"] {
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
+    }
+    .stApp {
+        background-color: #f0f2f6;
+    }
+
+    /* Headers */
+    h1, h2, h3 {
+        font-weight: 600;
+    }
+
+    /* Buttons: Primary CTA button styling */
+    .stButton > button {
+        border-radius: 8px;
+        font-weight: 600;
+        padding: 0.5rem 1rem;
+        border: none;
+        color: white;
+        transition: background-color 0.2s ease-in-out;
+    }
+    
+    /* Specific styling for the main action buttons */
+    div[data-testid="stFormSubmitButton"] button,
+    button[kind="primary"] {
+        background-color: #0068c9;
+    }
+    
+    div[data-testid="stFormSubmitButton"] button:hover,
+    button[kind="primary"]:hover {
+        background-color: #00509a;
+    }
+
+    /* Styling for the data editor */
+    .stDataFrame {
+        border: 1px solid #e0e0e0;
+        border-radius: 8px;
+    }
+
+    /* Containers and dividers for better separation */
+    [data-testid="stVerticalBlock"] {
+        border: 1px solid #e0e0e0;
+        background-color: #ffffff;
+        padding: 1.5rem;
+        border-radius: 10px;
+        margin-bottom: 1rem;
+    }
+
+    hr {
+        margin: 2rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
 
 # --- Embedded Knowledge Base ---
 KNOWLEDGE_BASE = {
@@ -62,7 +123,7 @@ def build_categorizer_prompt(note, categories_kb):
 
     **Instructions (Chain of Thought):**
     1.  **Analyze Keywords:** Scan the summary and description for keywords that match the categories.
-    2.  **Analyze Intent:** Determine the core purpose of the change. Is it about connecting to data, documenting data, or administering the server?
+    2.  **Analyze Intent:** Determine the core purpose of the change.
     3.  **Justify:** Write a one-sentence justification for your choice.
     4.  **Conclude:** State the final category name. If no category is a good fit, conclude with "Other".
 
@@ -104,165 +165,170 @@ def build_release_prompt(kb, note, category, deployment_type):
     return prompt
 
 # --- Main Application Logic ---
-st.title(f"Intelligent Release Notes Assistant")
+st.title("Intelligent Release Notes Assistant")
 
+# Initialize session state
 if 'processed_data' not in st.session_state: st.session_state.processed_data = None
 if 'final_report' not in st.session_state: st.session_state.final_report = None
 
-with st.sidebar:
-    st.header("⚙️ Configuration")
-    st.info("The knowledge base is embedded in the application.")
+# --- NEW: Configuration moved to the main page ---
+with st.expander("⚙️ Configuration", expanded=True):
+    st.info("The knowledge base is embedded in the application. Please provide your API key and the release details below.")
     api_key = st.text_input("Enter your OpenAI API Key", type="password")
-    release_version = st.text_input("Enter Release Version (e.g., 2025.3.1)", "2025.3.1")
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        release_version = st.text_input("Release Version", "2025.3.1")
+    with col2:
+        build_number = st.text_input("Build Number", "2409")
+    with col3:
+        release_date = st.text_input("Release Date", "September 28, 2025")
 
-st.header("Step 1: Upload Your Content Files")
-col1, col2, col3, col4 = st.columns(4)
-with col1: epics_csv = st.file_uploader("1. Epics", type="csv")
-with col2: stories_csv = st.file_uploader("2. Stories", type="csv")
-with col3: bugs_csv = st.file_uploader("3. Bug Fixes", type="csv")
-with col4: escalations_csv = st.file_uploader("4. Support Escalations", type="csv")
+# --- Main Workflow Container ---
+with st.container():
+    st.header("Step 1: Upload Your Content Files")
+    col1, col2, col3, col4 = st.columns(4)
+    with col1: epics_csv = st.file_uploader("1. Epics", type="csv")
+    with col2: stories_csv = st.file_uploader("2. Stories", type="csv")
+    with col3: bugs_csv = st.file_uploader("3. Bug Fixes", type="csv")
+    with col4: escalations_csv = st.file_uploader("4. Support Escalations", type="csv")
 
-if epics_csv and stories_csv and bugs_csv and escalations_csv:
-    if st.button("1️⃣ Triage & Categorize Items"):
-        st.session_state.processed_data = None
-        st.session_state.final_report = None
-        if not api_key: st.error("Please enter your OpenAI API key.")
-        else:
-            client = openai.OpenAI(api_key=api_key)
-            all_dfs = {"Epics": pd.read_csv(epics_csv).fillna(''), "Stories": pd.read_csv(stories_csv).fillna(''), "Bugs": pd.read_csv(bugs_csv).fillna(''), "Escalations": pd.read_csv(escalations_csv).fillna('')}
-            progress_bar = st.progress(0)
-            total_rows = sum(len(df) for df in all_dfs.values())
-            processed_rows = 0
-            public_items_raw = []
+    if epics_csv and stories_csv and bugs_csv and escalations_csv:
+        if st.button("1️⃣ Triage & Categorize Items", type="primary"):
+            st.session_state.processed_data = None
+            st.session_state.final_report = None
+            if not api_key: st.error("Please enter your OpenAI API key in the Configuration section.")
+            else:
+                client = openai.OpenAI(api_key=api_key)
+                all_dfs = {"Epics": pd.read_csv(epics_csv).fillna(''), "Stories": pd.read_csv(stories_csv).fillna(''), "Bugs": pd.read_csv(bugs_csv).fillna(''), "Escalations": pd.read_csv(escalations_csv).fillna('')}
+                progress_bar = st.progress(0)
+                total_rows = sum(len(df) for df in all_dfs.values())
+                processed_rows = 0
+                public_items_raw = []
 
-            for name, df in all_dfs.items():
-                for index, row in df.iterrows():
-                    processed_rows += 1
-                    progress_bar.progress(processed_rows / total_rows, text=f"Processing {name}: {row.get('Summary', '')[:30]}...")
-                    eng_note = row.to_dict()
-                    
-                    publicity_prompt = build_classifier_prompt(eng_note, 'publicity')
-                    try:
-                        response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": publicity_prompt}], max_tokens=5, temperature=0)
-                        if "PUBLIC" in response.choices[0].message.content.strip().upper():
-                            deployment_prompt = build_classifier_prompt(eng_note, 'deployment')
-                            dep_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": deployment_prompt}], max_tokens=10, temperature=0)
-                            eng_note['Deployment'] = dep_response.choices[0].message.content.strip()
+                for name, df in all_dfs.items():
+                    for index, row in df.iterrows():
+                        processed_rows += 1
+                        progress_bar.progress(processed_rows / total_rows, text=f"Processing {name}: {row.get('Summary', '')[:30]}...")
+                        eng_note = row.to_dict()
+                        
+                        publicity_prompt = build_classifier_prompt(eng_note, 'publicity')
+                        try:
+                            response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": publicity_prompt}], max_tokens=5, temperature=0)
+                            if "PUBLIC" in response.choices[0].message.content.strip().upper():
+                                deployment_prompt = build_classifier_prompt(eng_note, 'deployment')
+                                dep_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": deployment_prompt}], max_tokens=10, temperature=0)
+                                eng_note['Deployment'] = dep_response.choices[0].message.content.strip()
 
-                            categorizer_prompt = build_categorizer_prompt(eng_note, KNOWLEDGE_BASE['product_categories'])
-                            cat_response = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": categorizer_prompt}])
-                            cat_json = json.loads(cat_response.choices[0].message.content)
-                            eng_note['Category'] = cat_json.get('category', 'Other')
-                            
-                            public_items_raw.append(eng_note)
-                    except Exception as e:
-                        st.warning(f"Could not process {eng_note.get('Summary')}: {e}")
-            
-            df_public = pd.DataFrame(public_items_raw).fillna('')
-            df_public['Include'] = True
-            public_epic_keys = set(df_public[df_public['Issue Type'] == 'Epic']['Key'])
-            df_public['Include'] = df_public.apply(lambda row: False if row['Issue Type'] == 'Story' and row['parent'] in public_epic_keys else True, axis=1)
-            
-            st.session_state.processed_data = df_public
-            st.success(f"Triage complete. Found {len(df_public)} potentially public items for your review.")
+                                categorizer_prompt = build_categorizer_prompt(eng_note, KNOWLEDGE_BASE['product_categories'])
+                                cat_response = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": categorizer_prompt}])
+                                cat_json = json.loads(cat_response.choices[0].message.content)
+                                eng_note['Category'] = cat_json.get('category', 'Other')
+                                
+                                public_items_raw.append(eng_note)
+                        except Exception as e:
+                            st.warning(f"Could not process {eng_note.get('Summary')}: {e}")
+                
+                df_public = pd.DataFrame(public_items_raw).fillna('')
+                df_public['Include'] = True
+                public_epic_keys = set(df_public[df_public['Issue Type'] == 'Epic']['Key'])
+                df_public['Include'] = df_public.apply(lambda row: False if row['Issue Type'] == 'Story' and row['parent'] in public_epic_keys else True, axis=1)
+                
+                st.session_state.processed_data = df_public
+                st.success(f"Triage complete. Found {len(df_public)} potentially public items for your review.")
 
 if st.session_state.processed_data is not None:
-    st.header("Step 2: Review and Approve Items")
-    st.warning("Uncheck items to exclude them. You can also correct the AI-suggested Deployment and Category.")
-    
-    edited_df = st.data_editor(
-        st.session_state.processed_data,
-        column_config={
-            "Include": st.column_config.CheckboxColumn("Include?", default=True),
-            "Deployment": st.column_config.SelectboxColumn("Deployment", options=["Both", "Cloud Only", "On-Premise Only"], required=True),
-            "Category": st.column_config.SelectboxColumn("Category", options=list(KNOWLEDGE_BASE['product_categories'].keys()), required=True)
-        },
-        disabled=["Key", "Summary", "Issue Type", "parent", "Description"],
-        height=400, use_container_width=True
-    )
-    
-    approved_df = edited_df[edited_df['Include']]
-    st.info(f"You have selected **{len(approved_df)}** items to include in the release notes.")
+    with st.container():
+        st.header("Step 2: Review and Approve Items")
+        st.warning("Uncheck items to exclude them. You can also correct the AI-suggested Deployment and Category.")
+        
+        edited_df = st.data_editor(
+            st.session_state.processed_data,
+            column_config={
+                "Include": st.column_config.CheckboxColumn("Include?", default=True),
+                "Deployment": st.column_config.SelectboxColumn("Deployment", options=["Both", "Cloud Only", "On-Premise Only"], required=True),
+                "Category": st.column_config.SelectboxColumn("Category", options=list(KNOWLEDGE_BASE['product_categories'].keys()), required=True)
+            },
+            disabled=["Key", "Summary", "Issue Type", "parent", "Description"],
+            height=400, use_container_width=True
+        )
+        
+        approved_df = edited_df[edited_df['Include']]
+        st.info(f"You have selected **{len(approved_df)}** items to include in the release notes.")
 
-    if st.button("2️⃣ Generate Document for Approved Items"):
-        if not api_key: st.error("Please enter your OpenAI API key.")
-        else:
-            client = openai.OpenAI(api_key=api_key)
-            features_by_category = defaultdict(list)
-            bugs_by_category = defaultdict(list)
-            
-            progress_bar = st.progress(0, text="Writing Final Notes...")
-            total_to_write = len(approved_df)
-            
-            for i, (index, row) in enumerate(approved_df.iterrows()):
-                progress_bar.progress((i + 1) / total_to_write, text=f"Writing: {row.get('Summary', '')[:30]}...")
-                eng_note = row.to_dict()
+        if st.button("2️⃣ Generate Document for Approved Items", type="primary"):
+            if not api_key: st.error("Please enter your OpenAI API key.")
+            else:
+                client = openai.OpenAI(api_key=api_key)
+                features_by_category = defaultdict(list)
+                bugs_by_category = defaultdict(list)
                 
-                writer_prompt = build_release_prompt(KNOWLEDGE_BASE, eng_note, eng_note['Category'], eng_note['Deployment'])
-                try:
-                    writer_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": writer_prompt}])
-                    suggestion = writer_response.choices[0].message.content.strip()
-                    issue_type = eng_note.get("Issue Type", "Feature").lower()
+                progress_bar = st.progress(0, text="Writing Final Notes...")
+                total_to_write = len(approved_df)
+                
+                for i, (index, row) in enumerate(approved_df.iterrows()):
+                    progress_bar.progress((i + 1) / total_to_write, text=f"Writing: {row.get('Summary', '')[:30]}...")
+                    eng_note = row.to_dict()
                     
-                    # --- NEW: Logic for handling 'Other' category ---
-                    category = eng_note['Category']
-                    if "bug" in issue_type or "escalation" in issue_type:
-                        final_category = "Other Fixes" if category == "Other" else category
-                        bugs_by_category[final_category].append(suggestion)
-                    else:
-                        if category == "Other":
-                            # Extract the title from the generated note to use as a category
-                            try:
-                                final_category = suggestion.split('\n')[0].replace('**', '').strip()
-                            except IndexError:
-                                final_category = eng_note.get('Summary', 'Uncategorized Feature')
+                    writer_prompt = build_release_prompt(KNOWLEDGE_BASE, eng_note, eng_note['Category'], eng_note['Deployment'])
+                    try:
+                        writer_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": writer_prompt}])
+                        suggestion = writer_response.choices[0].message.content.strip()
+                        issue_type = eng_note.get("Issue Type", "Feature").lower()
+                        
+                        category = eng_note['Category']
+                        if "bug" in issue_type or "escalation" in issue_type:
+                            final_category = "Other Fixes" if category == "Other" else category
+                            bugs_by_category[final_category].append(suggestion)
                         else:
-                            final_category = category
-                        features_by_category[final_category].append(suggestion)
+                            if category == "Other":
+                                try:
+                                    final_category = suggestion.split('\n')[0].replace('**', '').strip()
+                                except IndexError:
+                                    final_category = eng_note.get('Summary', 'Uncategorized Feature')
+                            else:
+                                final_category = category
+                            features_by_category[final_category].append(suggestion)
+                    except Exception as e:
+                        st.warning(f"Could not write note for {row.get('Summary')}: {e}")
 
-                except Exception as e:
-                    st.warning(f"Could not write note for {row.get('Summary')}: {e}")
-
-            # --- UPDATED: Document Assembly Logic ---
-            month_year = datetime.now().strftime('%B %Y')
-            report_parts = [f"# Release {release_version}", f"_{month_year}_"]
-            
-            # --- Features and Enhancements Section ---
-            if features_by_category:
-                report_parts.append(f"\n\n**New Features and Enhancements**\n")
-                # First, process the official categories in order
-                for category_key in KNOWLEDGE_BASE['product_categories']:
-                    if category_key in features_by_category:
+                # --- Document Assembly ---
+                main_title = f"# Release {release_version} (Build {build_number})"
+                date_subtitle = f"_{release_date}_"
+                report_parts = [main_title, date_subtitle]
+                
+                if features_by_category:
+                    report_parts.append(f"\n\n**New Features and Enhancements**\n")
+                    for category_key in KNOWLEDGE_BASE['product_categories']:
+                        if category_key in features_by_category:
+                            report_parts.append(f"\n### {category_key}\n")
+                            report_parts.append("\n\n".join(features_by_category.pop(category_key)))
+                    for category_key, notes in features_by_category.items():
                         report_parts.append(f"\n### {category_key}\n")
-                        report_parts.append("\n\n".join(features_by_category.pop(category_key)))
-                # Then, process any remaining "title-as-category" items
-                for category_key, notes in features_by_category.items():
-                    report_parts.append(f"\n### {category_key}\n")
-                    report_parts.append("\n\n".join(notes))
+                        report_parts.append("\n\n".join(notes))
 
-            # --- Bug Fixes Section ---
-            if bugs_by_category:
-                report_parts.append(f"\n\n**Bug Fixes**\n")
-                # First, process official categories in order
-                for category_key in KNOWLEDGE_BASE['product_categories']:
-                     if category_key in bugs_by_category:
-                        report_parts.append(f"\n### {category_key}\n")
-                        report_parts.append("\n".join(bugs_by_category.pop(category_key)))
-                # Then, add the "Other Fixes" category if it exists
-                if "Other Fixes" in bugs_by_category:
-                     report_parts.append(f"\n### Other Fixes\n")
-                     report_parts.append("\n".join(bugs_by_category["Other Fixes"]))
-            
-            st.session_state.final_report = "\n".join(report_parts)
-            st.success("✅ Release notes document generated successfully!")
+                if bugs_by_category:
+                    report_parts.append(f"\n\n**Bug Fixes**\n")
+                    for category_key in KNOWLEDGE_BASE['product_categories']:
+                         if category_key in bugs_by_category:
+                            report_parts.append(f"\n### {category_key}\n")
+                            report_parts.append("\n".join(bugs_by_category.pop(category_key)))
+                    if "Other Fixes" in bugs_by_category:
+                         report_parts.append(f"\n### Other Fixes\n")
+                         report_parts.append("\n".join(bugs_by_category["Other Fixes"]))
+                
+                st.session_state.final_report = "\n".join(report_parts)
+                st.success("✅ Release notes document generated successfully!")
 
 if st.session_state.final_report:
-    st.header("Step 3: Download Report")
-    st.markdown("### Preview")
-    st.markdown(st.session_state.final_report)
-    st.download_button(
-        label="📥 Download Release Notes (.md)",
-        data=st.session_state.final_report.encode('utf-8'),
-        file_name=f"Release_Notes_{release_version}.md",
-        mime="text/markdown",
-    )
+    with st.container():
+        st.header("Step 3: Download Report")
+        st.markdown("### Preview")
+        st.markdown(st.session_state.final_report)
+        st.download_button(
+            label="📥 Download Release Notes (.md)",
+            data=st.session_state.final_report.encode('utf-8'),
+            file_name=f"Release_Notes_{release_version}.md",
+            mime="text/markdown",
+            type="primary"
+        )
