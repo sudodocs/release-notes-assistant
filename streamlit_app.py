@@ -4,7 +4,7 @@ import json
 import openai
 from datetime import datetime
 from collections import defaultdict
-import fitz  # PyMuPDF
+import re # Import regex module for RST conversion
 import io
 import requests
 
@@ -17,7 +17,7 @@ def load_knowledge_base(url):
     """Fetches and loads a JSON knowledge base from a user-provided URL."""
     try:
         response = requests.get(url)
-        response.raise_for_status()  # This will raise an error for bad responses (4xx or 5xx)
+        response.raise_for_status()
         return response.json()
     except Exception as e:
         st.error(f"Error loading Knowledge Base from URL. Please check the URL and file format. Details: {e}")
@@ -28,12 +28,54 @@ def get_prompt(kb, template_name, **kwargs):
     template = kb.get("prompt_templates", {}).get(template_name, "")
     return template.format(**kwargs)
 
+def convert_md_to_rst(md_text, release_version):
+    """Converts a Markdown string to a reStructuredText string."""
+    rst_text = md_text
+    
+    # --- Create Cross-Reference Labels and TOC ---
+    toc_entries = []
+    # Find all h3 headers (categories) to create labels and TOC
+    h3_headers = re.findall(r"### (.*)", rst_text)
+    
+    def create_label(title):
+        label_part = title.lower().replace(' ', '-')
+        return f".. _{label-part}-{release_version.split('.')[0]}{release_version.split('.')[1]}:"
+
+    for header in h3_headers:
+        label = create_label(header)
+        rst_text = rst_text.replace(f"### {header}", f"{label}\n\n{header}\n{'~'*len(header)}")
+        toc_entries.append(f"- :ref:`{header} <{header.lower().replace(' ', '-')}-{release_version.split('.')[0]}{release_version.split('.')[1]}>`")
+
+    # --- Convert Headers ---
+    # H1: Title
+    rst_text = re.sub(r"# (.*)", lambda m: f"{m.group(1)}\n{'='*len(m.group(1))}", rst_text)
+    # H2: Main Sections
+    rst_text = re.sub(r"## (.*)", lambda m: f"{m.group(1)}\n{'-'*len(m.group(1))}", rst_text)
+    # Note: H3 is handled above to include labels
+
+    # --- Convert Bold and Italics ---
+    # RST uses the same syntax for bold (**text**) and italics (*text*), so no change needed for basic cases.
+    # Markdown italics _text_ needs to be converted if used.
+    rst_text = re.sub(r"_(.*)_", r"*\1*", rst_text)
+
+    # --- Insert TOC ---
+    if toc_entries:
+        toc_block = "In this release:\n\n" + "\n".join(toc_entries)
+        # Find the release date line to insert the TOC after it
+        match = re.search(r"(\n\n)", rst_text)
+        if match:
+            insertion_point = match.end()
+            rst_text = rst_text[:insertion_point] + toc_block + "\n\n" + rst_text[insertion_point:]
+
+    return rst_text
+
 # --- Main Application Logic ---
 st.title("Intelligent Release Notes Assistant")
 
 # Initialize session state
 if 'processed_data' not in st.session_state: st.session_state.processed_data = None
-if 'final_report' not in st.session_state: st.session_state.final_report = None
+if 'final_report_md' not in st.session_state: st.session_state.final_report_md = None
+if 'final_report_rst' not in st.session_state: st.session_state.final_report_rst = None
 
 with st.expander("⚙️ **Configuration**", expanded=True):
     st.info("Please provide your API key, the URL to your knowledge base, and the release details.")
@@ -41,15 +83,15 @@ with st.expander("⚙️ **Configuration**", expanded=True):
     kb_url = st.text_input("Knowledge Base URL", placeholder="https://example.com/path/to/your/knowledge_base.json")
 
     col1, col2, col3 = st.columns(3)
-    with col1: release_version = st.text_input("Release Version", "2025.0")
+    with col1: release_version = st.text_input("Release Version", "2025.3.1")
     with col2: build_number = st.text_input("Build Number", "2409")
     with col3: release_date = st.text_input("Release Date", "September 28, 2025")
 
-# Load the knowledge base once
 KNOWLEDGE_BASE = load_knowledge_base(kb_url) if kb_url else None
 
 with st.container(border=True):
     st.header("Step 1: Upload Your Content Files")
+    # ... (rest of the file upload logic is unchanged) ...
     col1, col2, col3, col4 = st.columns(4)
     with col1: epics_csv = st.file_uploader("1. Epics", type="csv")
     with col2: stories_csv = st.file_uploader("2. Stories", type="csv")
@@ -61,6 +103,7 @@ with st.container(border=True):
             if not api_key or not KNOWLEDGE_BASE:
                 st.error("Please provide both an API Key and a valid Knowledge Base URL in the Configuration section.")
             else:
+                # ... (rest of the data processing logic is unchanged) ...
                 client = openai.OpenAI(api_key=api_key)
                 all_dfs = {"Epics": pd.read_csv(epics_csv).fillna(''), "Stories": pd.read_csv(stories_csv).fillna(''), "Bugs": pd.read_csv(bugs_csv).fillna(''), "Escalations": pd.read_csv(escalations_csv).fillna('')}
                 progress_bar = st.progress(0)
@@ -99,11 +142,13 @@ with st.container(border=True):
                 st.session_state.processed_data = df_public
                 st.success(f"Triage complete. Found {len(df_public)} potentially public items for your review.")
 
+
 if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
     with st.container(border=True):
         st.header("Step 2: Review and Approve Items")
         st.warning("Uncheck items to exclude them. You can also correct the AI-suggested Deployment and Category.")
-
+        
+        # ... (data_editor logic is unchanged) ...
         edited_df = st.data_editor(
             st.session_state.processed_data,
             column_config={
@@ -114,7 +159,6 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
             disabled=["Key", "Summary", "Issue Type", "parent", "Description"],
             height=400, use_container_width=True
         )
-
         approved_df = edited_df[edited_df['Include']]
         st.info(f"You have selected **{len(approved_df)}** items to include in the release notes.")
 
@@ -130,6 +174,7 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                 total_to_write = len(approved_df)
 
                 for i, (index, row) in enumerate(approved_df.iterrows()):
+                    # ... (AI writing logic is unchanged) ...
                     progress_bar.progress((i + 1) / total_to_write, text=f"Writing: {row.get('Summary', '')[:30]}...")
                     eng_note = row.to_dict()
 
@@ -152,7 +197,7 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                         note_json=json.dumps(eng_note, indent=2),
                         task_instruction=task_instruction
                     )
-
+                    
                     try:
                         writer_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": writer_prompt}])
                         suggestion = writer_response.choices[0].message.content.strip()
@@ -176,77 +221,75 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                 main_title = f"# Release {release_version} (Build {build_number})"
                 date_subtitle = f"_{release_date}_"
                 report_parts = [main_title, date_subtitle]
-
                 kb_sections = KNOWLEDGE_BASE['release_structure']['main_sections']
 
-                # --- START: MODIFIED BLOCK FOR FEATURE ASSEMBLY ---
+                # ... (Feature assembly logic with redundancy check is unchanged) ...
                 if features_by_category:
                     report_parts.append(f"\n\n## {kb_sections['features']}\n")
-
-                    # Helper function to clean and normalize text for accurate comparison.
                     def normalize_text(text):
                         return text.replace('####', '').replace('###', '').replace('**', '').strip().lower()
-
-                    # Logic to ensure a consistent, predictable order of categories in the report.
                     all_feature_categories = list(features_by_category.keys())
                     ordered_categories = [cat for cat in KNOWLEDGE_BASE['product_categories'] if cat in all_feature_categories]
                     remaining_categories = [cat for cat in all_feature_categories if cat not in KNOWLEDGE_BASE['product_categories']]
                     final_category_order = ordered_categories + remaining_categories
-
                     for cat_key in final_category_order:
-                        if cat_key not in features_by_category:
-                            continue
-
+                        if cat_key not in features_by_category: continue
                         notes = features_by_category[cat_key]
                         report_parts.append(f"\n### {cat_key}\n")
                         processed_notes = []
                         normalized_cat_key = normalize_text(cat_key)
-
                         for note in notes:
                             lines = note.strip().split('\n')
-                            if not lines:
-                                continue
-
+                            if not lines: continue
                             title_line = lines[0]
                             normalized_title = normalize_text(title_line)
-
-                            # The core redundancy check.
-                            # If the category header and feature title are the same, skip the title.
                             if normalized_cat_key == normalized_title:
                                 processed_notes.append("\n".join(lines[1:]).strip())
                             else:
-                                # Otherwise, keep the entire note with its title.
                                 processed_notes.append(note)
-
                         report_parts.append("\n\n".join(processed_notes))
-                # --- END: MODIFIED BLOCK FOR FEATURE ASSEMBLY ---
 
+                # ... (Bug fix assembly logic is unchanged) ...
                 if bugs_by_category:
                     report_parts.append(f"\n\n## {kb_sections['bugs']}\n")
-                    # Ensure defined categories are processed first
                     for cat_key in KNOWLEDGE_BASE['product_categories']:
-                        if cat_key in bugs_by_category:
+                         if cat_key in bugs_by_category:
                             report_parts.append(f"\n### {cat_key}\n")
-                            # Explicitly add '-' for bullet points
                             report_parts.append("\n".join([note if note.strip().startswith('-') else f"- {note}" for note in bugs_by_category.pop(cat_key)]))
-                    # Process any remaining bug categories (like 'Other Fixes')
                     for cat_key, notes in sorted(bugs_by_category.items()):
                         report_parts.append(f"\n### {cat_key}\n")
                         report_parts.append("\n".join([note if note.strip().startswith('-') else f"- {note}" for note in notes]))
 
-                st.session_state.final_report = "\n".join(report_parts)
+                # --- NEW: Generate both formats and store in session state ---
+                final_md_report = "\n".join(report_parts)
+                st.session_state.final_report_md = final_md_report
+                st.session_state.final_report_rst = convert_md_to_rst(final_md_report, release_version)
+                
                 st.success("✅ Release notes document generated successfully!")
 
-if st.session_state.final_report:
+if st.session_state.final_report_md:
     with st.container(border=True):
-        st.header("Step 3: Download Your Report")
-        st.markdown("### Preview")
-        st.markdown(st.session_state.final_report)
-        st.download_button(
-            label="📥 Download Release Notes (.md)",
-            data=st.session_state.final_report.encode('utf-8'),
-            file_name=f"Release_Notes_{release_version}.md",
-            mime="text/markdown",
-            type="primary",
-            use_container_width=True
-        )
+        st.header("Step 3: Download Your Reports")
+        st.markdown("### Preview (Markdown)")
+        st.markdown(st.session_state.final_report_md)
+        
+        # --- NEW: Dual download buttons ---
+        col1, col2 = st.columns(2)
+        with col1:
+            st.download_button(
+                label="📥 Download Markdown (.md)",
+                data=st.session_state.final_report_md.encode('utf-8'),
+                file_name=f"Release_Notes_{release_version}.md",
+                mime="text/markdown",
+                type="primary",
+                use_container_width=True
+            )
+        with col2:
+            st.download_button(
+                label="📥 Download RST (.rst)",
+                data=st.session_state.final_report_rst.encode('utf-8'),
+                file_name=f"Release_Notes_{release_version}.rst",
+                mime="text/x-rst",
+                type="secondary",
+                use_container_width=True
+            )
