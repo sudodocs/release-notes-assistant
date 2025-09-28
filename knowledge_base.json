@@ -1,5 +1,11 @@
 {
   "company_name": "Alation",
+  "deployment_text_mapping": {
+    "Cloud Only": "Alation Cloud Service",
+    "On-Premise Only": "Customer Managed",
+    "Both": "Alation Cloud Service, Customer Managed",
+    "bug_fix_cloud_suffix": "(Alation Cloud Service)"
+  },
   "release_structure": {
     "main_sections": {
       "features": "New Features and Enhancements",
