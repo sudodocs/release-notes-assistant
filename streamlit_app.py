@@ -83,7 +83,7 @@ with st.expander("⚙️ **Configuration**", expanded=True):
     kb_url = st.text_input("Knowledge Base URL", placeholder="https://example.com/path/to/your/knowledge_base.json")
 
     col1, col2, col3 = st.columns(3)
-    with col1: release_version = st.text_input("Release Version", "2025.3.1")
+    with col1: release_version = st.text_input("Release Version", "2025.0.1")
     with col2: build_number = st.text_input("Build Number", "2409")
     with col3: release_date = st.text_input("Release Date", "September 28, 2025")
 
