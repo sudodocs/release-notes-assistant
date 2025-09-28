@@ -10,27 +10,16 @@ import io
 # --- Page Configuration ---
 st.set_page_config(page_title="Interactive Release Notes Assistant", layout="wide")
 
-# --- SAFER: Custom CSS for improved UX, with the conflicting font rule removed ---
-st.markdown("""
-<style>
-    .stApp {
-        background-color: #f0f2f6;
-    }
-    h1, h2, h3 {
-        font-weight: 600;
-        color: #1E293B;
-    }
-    .stButton > button[kind="primary"] {
-        background-color: #0068c9;
-        font-weight: 600;
-        border-radius: 8px;
-        transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
-    }
-    .stButton > button[kind="primary"]:hover {
-        background-color: #00509a;
-    }
-</style>
-""", unsafe_allow_html=True)
+# --- NEW: Function to load local CSS file ---
+def local_css(file_name):
+    try:
+        with open(file_name) as f:
+            st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    except FileNotFoundError:
+        st.error(f"CSS file not found. Please ensure '{file_name}' is in the same directory.")
+
+# Apply the custom CSS
+local_css("style.css")
 
 
 # --- Embedded Knowledge Base ---
@@ -129,14 +118,15 @@ def build_release_prompt(kb, note, category, deployment_type):
     return prompt
 
 # --- Main Application Logic ---
-st.title("Intelligent Release Notes Assistant") # Removed rocket icon
+st.title("Intelligent Release Notes Assistant")
 
 if 'processed_data' not in st.session_state: st.session_state.processed_data = None
 if 'final_report' not in st.session_state: st.session_state.final_report = None
 
 with st.expander("⚙️ **Configuration**", expanded=True):
     st.info("Please provide your API key and the release details below.")
-    api_key = st.text_input("Enter your OpenAI API Key", type="password", label_visibility="collapsed", placeholder="Enter your OpenAI API Key")
+    # REMOVED label_visibility for consistency
+    api_key = st.text_input("Enter your OpenAI API Key", type="password", placeholder="Enter your OpenAI API Key")
     
     col1, col2, col3 = st.columns(3)
     with col1:
