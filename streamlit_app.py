@@ -32,35 +32,49 @@ def convert_md_to_rst(md_text, release_version):
     """Converts a Markdown string to a reStructuredText string."""
     rst_text = md_text
     toc_entries = []
+    
+    # --- Create Table of Contents ---
+    # 1. Find all feature categories (H3s that appear before H2 "Bug Fixes")
+    features_section_match = re.search(r'(.*?)## Bug Fixes', md_text, re.DOTALL)
+    features_section = features_section_match.group(1) if features_section_match else md_text
+    feature_headers = re.findall(r"### (.*)", features_section)
 
-    # Helper function to create a valid RST label and TOC entry from a header title
-    def create_label_and_toc(header_title):
+    def create_toc_entry(header_title):
         sanitized_title = re.sub(r'[^\w\s-]', '', header_title).strip().lower().replace(' ', '-')
         version_parts = release_version.split('.')
         short_version = f"{version_parts[0]}{version_parts[1]}"
-        
-        label = f".. _{sanitized_title}-{short_version}:"
-        toc_entry = f"- :ref:`{header_title} <{sanitized_title}-{short_version}>`"
-        return label, toc_entry
+        return f"- :ref:`{header_title} <{sanitized_title}-{short_version}>`"
 
-    # This function is used by re.sub to replace each Markdown H3 header
-    def h3_header_replacer(match):
+    for header in feature_headers:
+        toc_entries.append(create_toc_entry(header))
+
+    # 2. Manually add a single "Bug Fixes" entry to the TOC
+    if '## Bug Fixes' in md_text:
+        toc_entries.append(create_toc_entry("Bug Fixes"))
+
+    # --- Header and Label Conversion ---
+    def header_replacer(match, level):
         header = match.group(1)
-        label, toc_entry = create_label_and_toc(header)
-        toc_entries.append(toc_entry)
-        return f"{label}\n\n{header}\n{'~'*len(header)}\n"
+        sanitized_title = re.sub(r'[^\w\s-]', '', header).strip().lower().replace(' ', '-')
+        version_parts = release_version.split('.')
+        short_version = f"{version_parts[0]}{version_parts[1]}"
+        label = f".. _{sanitized_title}-{short_version}:"
+        
+        underline_char = ''
+        if level == 2: underline_char = '-'
+        elif level == 3: underline_char = '~'
+        
+        return f"{label}\n\n{header}\n{underline_char*len(header)}\n"
 
-    # --- Header Conversion (Order is important) ---
-    rst_text = re.sub(r"### (.*)", h3_header_replacer, rst_text)
+    # Replace H3 and H2 headers with their RST equivalent + a label
+    rst_text = re.sub(r"### (.*)", lambda m: header_replacer(m, 3), rst_text)
+    rst_text = re.sub(r"## (.*)", lambda m: header_replacer(m, 2), rst_text)
 
-    def h4_header_replacer(match):
-        title = match.group(1)
-        return f"{title}\n{'^' * len(title)}\n"
-    rst_text = re.sub(r"^\*\*(.*)\*\*$", h4_header_replacer, rst_text, flags=re.MULTILINE)
-
-    rst_text = re.sub(r"## (.*)", lambda m: f"{m.group(1)}\n{'-'*len(m.group(1))}\n", rst_text)
+    # Convert H1 and bolded titles without adding labels
     rst_text = re.sub(r"# (.*)", lambda m: f"{m.group(1)}\n{'='*len(m.group(1))}\n", rst_text)
+    rst_text = re.sub(r"^\*\*(.*)\*\*$", lambda m: f"{m.group(1)}\n{'^' * len(m.group(1))}\n", rst_text, flags=re.MULTILINE)
     
+    # Convert italics
     rst_text = re.sub(r"_(.*?)_", r"*\1*", rst_text)
 
     # Insert the generated Table of Contents
@@ -200,14 +214,10 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                         writer_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": writer_prompt}])
                         suggestion = writer_response.choices[0].message.content.strip()
 
-                        jira_key = row.get('Key', '')
                         deployment_type = row.get('Deployment', 'Both')
                         deployment_map = KNOWLEDGE_BASE.get('deployment_text_mapping', {})
                         
                         final_note_parts = [suggestion]
-
-                        if jira_key:
-                            final_note_parts.append(f"({jira_key})")
                         
                         if ("bug" in issue_type or "escalation" in issue_type) and (deployment_type in ["Cloud Only", "Both"]):
                             bug_suffix = deployment_map.get('bug_fix_cloud_suffix', '')
@@ -279,10 +289,14 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
 
                 if bugs_by_category:
                     report_parts.append(f"\n\n## {kb_sections['bugs']}\n")
-                    for cat_key in list(KNOWLEDGE_BASE['product_categories'].keys()) + ["Other Fixes"]:
-                         if cat_key in bugs_by_category:
-                            report_parts.append(f"\n### {cat_key}\n")
-                            report_parts.append("\n".join([note if note.strip().startswith('-') else f"- {note}" for note in bugs_by_category.pop(cat_key)]))
+                    # Combine all defined bug categories plus "Other Fixes" for ordering
+                    bug_category_order = [cat for cat in KNOWLEDGE_BASE['product_categories'] if cat in bugs_by_category]
+                    if "Other Fixes" in bugs_by_category:
+                        bug_category_order.append("Other Fixes")
+                    
+                    for cat_key in bug_category_order:
+                        report_parts.append(f"\n### {cat_key}\n")
+                        report_parts.append("\n".join([note if note.strip().startswith('-') else f"- {note}" for note in bugs_by_category[cat_key]]))
                 
                 final_md_report = "\n".join(report_parts)
                 st.session_state.final_report_md = final_md_report
