@@ -6,7 +6,7 @@ from datetime import datetime
 from collections import defaultdict
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Intelligent Release Notes Assistant 🚀", layout="wide")
+st.set_page_config(page_title="Intelligent Release Notes Assistant", layout="wide")
 
 # --- Embedded Knowledge Base ---
 KNOWLEDGE_BASE = {
