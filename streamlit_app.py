@@ -8,7 +8,7 @@ import fitz  # PyMuPDF
 import io
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Interactive Release Notes Assistant 🚀", layout="wide")
+st.set_page_config(page_title="Interactive Release Notes Assistant", layout="wide")
 
 # --- SAFER: Custom CSS for improved UX, with the conflicting font rule removed ---
 st.markdown("""
@@ -129,7 +129,7 @@ def build_release_prompt(kb, note, category, deployment_type):
     return prompt
 
 # --- Main Application Logic ---
-st.title("Intelligent Release Notes Assistant 🚀")
+st.title("Intelligent Release Notes Assistant") # Removed rocket icon
 
 if 'processed_data' not in st.session_state: st.session_state.processed_data = None
 if 'final_report' not in st.session_state: st.session_state.final_report = None
