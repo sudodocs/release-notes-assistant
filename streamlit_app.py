@@ -175,7 +175,7 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                 kb_sections = KNOWLEDGE_BASE['release_structure']['main_sections']
 
                 if features_by_category:
-                    report_parts.append(f"\n\n**{kb_sections['features']}**\n")
+                    report_parts.append(f"\n\n## {kb_sections['features']}\n")
                     for cat_key in KNOWLEDGE_BASE['product_categories']:
                         if cat_key in features_by_category:
                             report_parts.append(f"\n### {cat_key}\n")
@@ -185,7 +185,7 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                         report_parts.append("\n\n".join(notes))
 
                 if bugs_by_category:
-                    report_parts.append(f"\n\n**{kb_sections['bugs']}**\n")
+                    report_parts.append(f"\n\n## {kb_sections['bugs']}\n")
                     for cat_key in KNOWLEDGE_BASE['product_categories']:
                          if cat_key in bugs_by_category:
                             report_parts.append(f"\n### {cat_key}\n")
