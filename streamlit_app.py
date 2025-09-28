@@ -33,33 +33,43 @@ def convert_md_to_rst(md_text, release_version):
     rst_text = md_text
     toc_entries = []
 
-    # A helper function to create a valid RST label and TOC entry from a header title
+    # Helper function to create a valid RST label and TOC entry from a header title
     def create_label_and_toc(header_title):
-        # Sanitize the title for the label, e.g., "Content Experience" -> "content-experience"
-        sanitized_title = header_title.lower().replace(' ', '-')
-        # Create short version string, e.g., "2025.3.1" -> "20253"
+        # FIXED: More robust sanitization to remove punctuation from labels
+        sanitized_title = re.sub(r'[^\w\s-]', '', header_title).strip().lower().replace(' ', '-')
+        
         version_parts = release_version.split('.')
         short_version = f"{version_parts[0]}{version_parts[1]}"
         
-        # Create the final RST label and TOC reference
         label = f".. _{sanitized_title}-{short_version}:"
         toc_entry = f"- :ref:`{header_title} <{sanitized_title}-{short_version}>`"
         return label, toc_entry
 
     # This function is used by re.sub to replace each Markdown H3 header
-    def header_replacer(match):
+    def h3_header_replacer(match):
         header = match.group(1)
         label, toc_entry = create_label_and_toc(header)
         toc_entries.append(toc_entry)
-        # Return the RST-formatted header with its label
-        return f"{label}\n\n{header}\n{'~'*len(header)}"
+        # FIXED: Added a newline at the end for spacing
+        return f"{label}\n\n{header}\n{'~'*len(header)}\n"
 
-    # Find all H3 headers (### Category) and replace them using the function above
-    rst_text = re.sub(r"### (.*)", header_replacer, rst_text)
+    # --- Header Conversion (Order is important) ---
 
-    # Convert H1 (# Title) and H2 (## Section) headers
-    rst_text = re.sub(r"# (.*)", lambda m: f"{m.group(1)}\n{'='*len(m.group(1))}", rst_text)
-    rst_text = re.sub(r"## (.*)", lambda m: f"{m.group(1)}\n{'-'*len(m.group(1))}", rst_text)
+    # Process H3 headers first as they are the most complex
+    rst_text = re.sub(r"### (.*)", h3_header_replacer, rst_text)
+
+    # Convert bolded titles on their own line to RST H4 headers
+    def h4_header_replacer(match):
+        title = match.group(1)
+        # FIXED: Added a newline at the end for spacing
+        return f"{title}\n{'^' * len(title)}\n"
+    rst_text = re.sub(r"^\*\*(.*)\*\*$", h4_header_replacer, rst_text, flags=re.MULTILINE)
+
+    # FIXED: Process H2 and H1 headers *after* H3, in the correct order
+    # Convert H2 (## Section) headers
+    rst_text = re.sub(r"## (.*)", lambda m: f"{m.group(1)}\n{'-'*len(m.group(1))}\n", rst_text)
+    # Convert H1 (# Title) headers
+    rst_text = re.sub(r"# (.*)", lambda m: f"{m.group(1)}\n{'='*len(m.group(1))}\n", rst_text)
     
     # Convert _italics_ to *italics* for RST compatibility
     rst_text = re.sub(r"_(.*?)_", r"*\1*", rst_text)
@@ -67,7 +77,6 @@ def convert_md_to_rst(md_text, release_version):
     # Insert the generated Table of Contents after the date line
     if toc_entries:
         toc_block = "In this release:\n\n" + "\n".join(toc_entries)
-        # Split the document just after the title and date to insert the TOC
         parts = rst_text.split('\n', 2)
         if len(parts) > 2:
             rst_text = f"{parts[0]}\n{parts[1]}\n\n{toc_block}\n\n{parts[2]}"
