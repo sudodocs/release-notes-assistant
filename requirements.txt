@@ -4,3 +4,4 @@ google-generativeai==0.7.1
 openai
 requests
 huggingface-hub
+PyMuPDF
