@@ -104,7 +104,7 @@ def build_release_prompt(kb, note, category, deployment_type):
     return prompt
 
 # --- Main Application Logic ---
-st.title(f"Intelligent Release Notes Assistant 🚀")
+st.title(f"Intelligent Release Notes Assistant")
 
 if 'processed_data' not in st.session_state: st.session_state.processed_data = None
 if 'final_report' not in st.session_state: st.session_state.final_report = None
