@@ -62,8 +62,8 @@
     "category_specific_rules": {
       "Public APIs": "You MUST identify the specific API endpoints, methods (e.g., GET, POST), or parameters that were changed and include these technical details in the description."
     },
-    "feature_enhancement_writing": { "instruction": "Create a short, bolded title from the 'Summary'. On the next line, write a clear, benefit-oriented paragraph. At the end, add the Jira key in parentheses." },
-    "bug_fix_writing": { "instruction": "Generate a single sentence for a bullet point starting with 'Fixed an issue where...'. At the end, add the Jira key in parentheses." }
+    "feature_enhancement_writing": { "instruction": "Create a short title from the 'Summary' and format it as a Level 4 Markdown header (e.g., '#### My Feature Title'). On the next line, write a clear, non-bolded, benefit-oriented paragraph. At the end of the paragraph, add the Jira key in parentheses." },
+    "bug_fix_writing": { "instruction": "Generate a single, non-bolded sentence for a bullet point starting with '- Fixed an issue where...'. Do not use any other markdown formatting. At the end of the sentence, add the Jira key in parentheses." }
   },
   "cloud_native_identifier": {
       "instruction": "If the engineering note's summary or description contains phrases like 'Alation Cloud Service', 'ACS', or 'cloud-only', the feature is cloud-native.",
