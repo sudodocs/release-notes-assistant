@@ -8,9 +8,9 @@ import fitz  # PyMuPDF
 import io
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Interactive Release Notes Assistant", layout="wide")
+st.set_page_config(page_title="Interactive Release Notes Assistant 🚀", layout="wide")
 
-# --- NEW: Custom CSS for improved UX ---
+# --- CORRECTED: Simplified CSS for a clean and robust UI ---
 st.markdown("""
 <style>
     /* Main font and background */
@@ -21,50 +21,24 @@ st.markdown("""
         background-color: #f0f2f6;
     }
 
-    /* Headers */
+    /* Headers for clear hierarchy */
     h1, h2, h3 {
         font-weight: 600;
+        color: #1E293B; /* Darker text for better contrast */
     }
 
-    /* Buttons: Primary CTA button styling */
-    .stButton > button {
-        border-radius: 8px;
-        font-weight: 600;
-        padding: 0.5rem 1rem;
-        border: none;
-        color: white;
-        transition: background-color 0.2s ease-in-out;
-    }
-    
-    /* Specific styling for the main action buttons */
-    div[data-testid="stFormSubmitButton"] button,
-    button[kind="primary"] {
+    /* Primary CTA button styling */
+    .stButton > button[kind="primary"] {
         background-color: #0068c9;
+        font-weight: 600;
+        border-radius: 8px;
+        transition: background-color 0.2s ease-in-out, color 0.2s ease-in-out;
     }
     
-    div[data-testid="stFormSubmitButton"] button:hover,
-    button[kind="primary"]:hover {
+    .stButton > button[kind="primary"]:hover {
         background-color: #00509a;
     }
 
-    /* Styling for the data editor */
-    .stDataFrame {
-        border: 1px solid #e0e0e0;
-        border-radius: 8px;
-    }
-
-    /* Containers and dividers for better separation */
-    [data-testid="stVerticalBlock"] {
-        border: 1px solid #e0e0e0;
-        background-color: #ffffff;
-        padding: 1.5rem;
-        border-radius: 10px;
-        margin-bottom: 1rem;
-    }
-
-    hr {
-        margin: 2rem 0;
-    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -165,16 +139,14 @@ def build_release_prompt(kb, note, category, deployment_type):
     return prompt
 
 # --- Main Application Logic ---
-st.title("Intelligent Release Notes Assistant")
+st.title("Intelligent Release Notes Assistant 🚀")
 
-# Initialize session state
 if 'processed_data' not in st.session_state: st.session_state.processed_data = None
 if 'final_report' not in st.session_state: st.session_state.final_report = None
 
-# --- NEW: Configuration moved to the main page ---
-with st.expander("⚙️ Configuration", expanded=True):
-    st.info("The knowledge base is embedded in the application. Please provide your API key and the release details below.")
-    api_key = st.text_input("Enter your OpenAI API Key", type="password")
+with st.expander("⚙️ **Configuration**", expanded=True):
+    st.info("Please provide your API key and the release details below.")
+    api_key = st.text_input("Enter your OpenAI API Key", type="password", label_visibility="collapsed", placeholder="Enter your OpenAI API Key")
     
     col1, col2, col3 = st.columns(3)
     with col1:
@@ -184,8 +156,8 @@ with st.expander("⚙️ Configuration", expanded=True):
     with col3:
         release_date = st.text_input("Release Date", "September 28, 2025")
 
-# --- Main Workflow Container ---
-with st.container():
+# --- CORRECTED: Using st.container with border for a robust layout ---
+with st.container(border=True):
     st.header("Step 1: Upload Your Content Files")
     col1, col2, col3, col4 = st.columns(4)
     with col1: epics_csv = st.file_uploader("1. Epics", type="csv")
@@ -194,7 +166,7 @@ with st.container():
     with col4: escalations_csv = st.file_uploader("4. Support Escalations", type="csv")
 
     if epics_csv and stories_csv and bugs_csv and escalations_csv:
-        if st.button("1️⃣ Triage & Categorize Items", type="primary"):
+        if st.button("1️⃣ Triage & Categorize Items", type="primary", use_container_width=True):
             st.session_state.processed_data = None
             st.session_state.final_report = None
             if not api_key: st.error("Please enter your OpenAI API key in the Configuration section.")
@@ -238,7 +210,7 @@ with st.container():
                 st.success(f"Triage complete. Found {len(df_public)} potentially public items for your review.")
 
 if st.session_state.processed_data is not None:
-    with st.container():
+    with st.container(border=True):
         st.header("Step 2: Review and Approve Items")
         st.warning("Uncheck items to exclude them. You can also correct the AI-suggested Deployment and Category.")
         
@@ -256,7 +228,7 @@ if st.session_state.processed_data is not None:
         approved_df = edited_df[edited_df['Include']]
         st.info(f"You have selected **{len(approved_df)}** items to include in the release notes.")
 
-        if st.button("2️⃣ Generate Document for Approved Items", type="primary"):
+        if st.button("2️⃣ Generate Document for Approved Items", type="primary", use_container_width=True):
             if not api_key: st.error("Please enter your OpenAI API key.")
             else:
                 client = openai.OpenAI(api_key=api_key)
@@ -292,7 +264,7 @@ if st.session_state.processed_data is not None:
                     except Exception as e:
                         st.warning(f"Could not write note for {row.get('Summary')}: {e}")
 
-                # --- Document Assembly ---
+                # Document Assembly
                 main_title = f"# Release {release_version} (Build {build_number})"
                 date_subtitle = f"_{release_date}_"
                 report_parts = [main_title, date_subtitle]
@@ -321,8 +293,8 @@ if st.session_state.processed_data is not None:
                 st.success("✅ Release notes document generated successfully!")
 
 if st.session_state.final_report:
-    with st.container():
-        st.header("Step 3: Download Report")
+    with st.container(border=True):
+        st.header("Step 3: Download Your Report")
         st.markdown("### Preview")
         st.markdown(st.session_state.final_report)
         st.download_button(
@@ -330,5 +302,6 @@ if st.session_state.final_report:
             data=st.session_state.final_report.encode('utf-8'),
             file_name=f"Release_Notes_{release_version}.md",
             mime="text/markdown",
-            type="primary"
+            type="primary",
+            use_container_width=True
         )
