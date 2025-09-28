@@ -38,7 +38,7 @@ with st.expander("⚙️ **Configuration**", expanded=True):
     st.info("Please provide your API key, the URL to your knowledge base, and the release details.")
     api_key = st.text_input("Enter your OpenAI API Key", type="password", placeholder="Enter your OpenAI API Key")
     # Alation-specific KB URL provided as a default example
-    kb_url = st.text_input("Knowledge Base URL", "https://raw.githubusercontent.com/YOUR_USERNAME/YOUR_REPO/main/alation_knowledge_base.json")
+    kb_url = st.text_input("Knowledge Base URL", "https://raw.githubusercontent.com/mrsauravs/release-notes-assistant/refs/heads/main/knowledge_base.json")
     
     col1, col2, col3 = st.columns(3)
     with col1: release_version = st.text_input("Release Version", "2025.3.1")
