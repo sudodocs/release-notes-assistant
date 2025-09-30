@@ -1,6 +1,6 @@
 # Intelligent Release Notes Assistant
 
-[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://your-streamlit-app-url.com) An intelligent Streamlit assistant that automates the generation of professional, publication-ready release notes from Jira CSV exports using a customizable AI-powered workflow.
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://release-notes-assistant.streamlit.app/) An intelligent Streamlit assistant that automates the generation of professional, publication-ready release notes from Jira CSV exports using a customizable AI-powered workflow.
 
 This application transforms the tedious, manual process of writing release notes into a streamlined, semi-automated workflow. By leveraging a configurable knowledge base and powerful Large Language Models (LLMs) like OpenAI, Google Gemini, and Hugging Face, it produces consistent, high-quality documentation with minimal human effort.
 
