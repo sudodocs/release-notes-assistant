@@ -2,6 +2,8 @@ import streamlit as st
 import pandas as pd
 import json
 import openai
+import google.generativeai as genai
+from huggingface_hub import InferenceClient
 from datetime import datetime
 from collections import defaultdict
 import re
@@ -26,10 +28,44 @@ def load_knowledge_base(url):
 def get_prompt(kb, template_name, **kwargs):
     """Safely gets and formats a prompt from the knowledge base."""
     template = kb.get("prompt_templates", {}).get(template_name, "")
-    # A simple approach to fill placeholders, ignoring ones not provided in kwargs
     for key, value in kwargs.items():
         template = template.replace(f"{{{key}}}", str(value))
     return template
+
+# --- [NEW] Centralized AI Provider function ---
+def call_ai_provider(prompt, api_key, provider, model_name="gpt-4o", hf_model_id=None, expect_json=False):
+    """Calls the selected AI provider and returns the response text."""
+    try:
+        if provider == "Google Gemini":
+            genai.configure(api_key=api_key)
+            model = genai.GenerativeModel('gemini-1.5-flash-latest')
+            response = model.generate_content(prompt)
+            return response.text.strip()
+            
+        elif provider == "OpenAI":
+            client = openai.OpenAI(api_key=api_key)
+            completion_params = {
+                "model": model_name,
+                "messages": [{"role": "user", "content": prompt}],
+            }
+            if expect_json:
+                completion_params["response_format"] = {"type": "json_object"}
+                
+            response = client.chat.completions.create(**completion_params)
+            return response.choices[0].message.content.strip()
+            
+        elif provider == "Hugging Face":
+            if not hf_model_id:
+                st.warning("Hugging Face model ID is required.")
+                return ""
+            client = InferenceClient(token=api_key)
+            response = client.text_generation(prompt, model=hf_model_id, max_new_tokens=1024)
+            return response.strip()
+            
+    except Exception as e:
+        st.error(f"Error calling {provider}: {e}")
+        return ""
+    return ""
 
 
 def is_public_api_update(eng_note, kb):
@@ -54,7 +90,6 @@ def is_public_api_update(eng_note, kb):
 def get_api_user_roles(eng_note, kb):
     """
     Determines the applicable user roles for a Public API ticket.
-    It first checks for explicit keywords, then falls back to a default.
     """
     api_details = kb.get("public_api_details", {})
     role_mapping = api_details.get("role_mapping", {})
@@ -64,10 +99,8 @@ def get_api_user_roles(eng_note, kb):
     for api_name, roles in role_mapping.items():
         if api_name.lower() in text_to_check:
             return roles
-            
     return default_roles
 
-# --- [MODIFIED] RST Conversion Logic ---
 def convert_md_to_rst(md_text, release_version):
     """
     Converts a Markdown string to a reStructuredText string, creating cross-references
@@ -75,8 +108,7 @@ def convert_md_to_rst(md_text, release_version):
     """
     toc_entries = []
     
-    # --- 1. Generate Table of Contents Entries ---
-    # Find all feature categories (H3s that appear before H2 "Bug Fixes")
+    # Generate Table of Contents Entries
     features_section_match = re.search(r'(.*?)## Bug Fixes', md_text, re.DOTALL)
     features_section = features_section_match.group(1) if features_section_match else md_text
     feature_headers = re.findall(r"### (.*)", features_section)
@@ -90,11 +122,10 @@ def convert_md_to_rst(md_text, release_version):
     for header in feature_headers:
         toc_entries.append(create_toc_entry(header))
 
-    # Manually add a single "Bug Fixes" entry to the TOC
     if '## Bug Fixes' in md_text:
         toc_entries.append(create_toc_entry("Bug Fixes"))
 
-    # --- 2. Define Header Conversion Functions ---
+    # Define Header Conversion Functions
     def header_replacer_with_label(match, level):
         header = match.group(1).strip()
         sanitized_title = re.sub(r'[^\w\s-]', '', header).strip().lower().replace(' ', '-')
@@ -109,18 +140,16 @@ def convert_md_to_rst(md_text, release_version):
         underline_char = {2: '-', 3: '~'}.get(level, '')
         return f"\n{header}\n{underline_char*len(header)}\n"
 
-    # --- 3. Process Markdown in Sections ---
+    # Process Markdown in Sections
     bug_fixes_heading = "## Bug Fixes"
     if bug_fixes_heading in md_text:
         parts = md_text.split(bug_fixes_heading, 1)
         features_md = parts[0]
-        # Re-add the heading to the second part for processing
         bugs_md = bug_fixes_heading + parts[1] 
     else:
         features_md = md_text
         bugs_md = ""
 
-    # Process the features section: add labels to all H2s and H3s
     processed_features = re.sub(r"### (.*)", lambda m: header_replacer_with_label(m, 3), features_md)
     processed_features = re.sub(r"## (.*)", lambda m: header_replacer_with_label(m, 2), processed_features)
     
@@ -129,36 +158,24 @@ def convert_md_to_rst(md_text, release_version):
         bug_lines = bugs_md.split('\n', 1)
         main_bug_header_md = bug_lines[0]
         rest_of_bugs_md = bug_lines[1] if len(bug_lines) > 1 else ""
-        
-        # Process the main "## Bug Fixes" header WITH a label
         processed_main_bug_header = re.sub(r"## (.*)", lambda m: header_replacer_with_label(m, 2), main_bug_header_md)
-        
-        # Process all sub-categories (H3s) in the bug section WITHOUT labels
         processed_rest_of_bugs = re.sub(r"### (.*)", lambda m: header_replacer_no_label(m, 3), rest_of_bugs_md)
-        
         processed_bugs = processed_main_bug_header + processed_rest_of_bugs
 
-    # Combine processed sections
     rst_text = processed_features + processed_bugs
-
-    # --- 4. Apply Global Formatting and Insert TOC ---
-    # Convert H1 and bolded titles
     rst_text = re.sub(r"# (.*)", lambda m: f"{m.group(1).strip()}\n{'='*len(m.group(1).strip())}\n", rst_text)
     rst_text = re.sub(r"^\*\*(.*)\*\*$", lambda m: f"{m.group(1).strip()}\n{'^' * len(m.group(1).strip())}\n", rst_text, flags=re.MULTILINE)
-    
-    # Convert italics
     rst_text = re.sub(r"_(.*?)_", r"*\1*", rst_text)
 
-    # Insert the generated Table of Contents
     if toc_entries:
         toc_block = "\nIn this release:\n\n" + "\n".join(toc_entries) + "\n"
-        # Find the first main header to insert the TOC after it
         match = re.search(r"(=+|=+\n\n)", rst_text)
         if match:
             insert_pos = match.end()
             rst_text = rst_text[:insert_pos] + toc_block + rst_text[insert_pos:]
 
     return rst_text.strip()
+
 
 # --- Main Application Logic ---
 st.title("Intelligent Release Notes Assistant")
@@ -168,11 +185,24 @@ if 'processed_data' not in st.session_state: st.session_state.processed_data = N
 if 'final_report_md' not in st.session_state: st.session_state.final_report_md = None
 if 'final_report_rst' not in st.session_state: st.session_state.final_report_rst = None
 
+# --- [MODIFIED] Configuration Section ---
 with st.expander("⚙️ **Configuration**", expanded=True):
-    st.info("Please provide your API key, the URL to your knowledge base, and the release details.")
-    api_key = st.text_input("Enter your OpenAI API Key", type="password")
-    kb_url = st.text_input("Knowledge Base URL", placeholder="https://example.com/path/to/your/knowledge_base.json")
+    st.info("Please select your AI provider, provide an API key, the URL to your knowledge base, and the release details.")
+    
+    ai_provider = st.selectbox("Choose AI Provider", ["OpenAI", "Google Gemini", "Hugging Face"])
+    
+    api_key_label = "API Key"
+    if ai_provider == "Hugging Face":
+        api_key_label = "Hugging Face User Access Token"
+    
+    api_key = st.text_input(f"Enter your {api_key_label}", type="password")
+    
+    hf_model_id = None
+    if ai_provider == "Hugging Face":
+        hf_model_id = st.text_input("Enter Hugging Face Model ID", help="e.g., mistralai/Mistral-7B-Instruct-v0.2")
 
+    st.markdown("---")
+    kb_url = st.text_input("Knowledge Base URL", placeholder="https://example.com/path/to/your/knowledge_base.json")
     col1, col2, col3 = st.columns(3)
     with col1: release_version = st.text_input("Release Version", "2025.3.1")
     with col2: build_number = st.text_input("Build Number", "2409")
@@ -193,7 +223,6 @@ with st.container(border=True):
             if not api_key or not KNOWLEDGE_BASE:
                 st.error("Please provide an API Key and a valid Knowledge Base URL.")
             else:
-                client = openai.OpenAI(api_key=api_key)
                 all_dfs = {"Epics": pd.read_csv(epics_csv).fillna(''), "Stories": pd.read_csv(stories_csv).fillna(''), "Bugs": pd.read_csv(bugs_csv).fillna(''), "Escalations": pd.read_csv(escalations_csv).fillna('')}
                 progress_bar = st.progress(0)
                 total_rows = sum(len(df) for df in all_dfs.values())
@@ -208,19 +237,21 @@ with st.container(border=True):
 
                         try:
                             publicity_prompt = get_prompt(KNOWLEDGE_BASE, 'classifier_publicity', summary=eng_note.get("Summary", ""), issue_type=eng_note.get("Issue Type", ""))
-                            response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": publicity_prompt}], max_tokens=5, temperature=0)
+                            # --- [MODIFIED] Use new AI caller function ---
+                            publicity_response = call_ai_provider(publicity_prompt, api_key, ai_provider, hf_model_id=hf_model_id)
                             
-                            if "PUBLIC" in response.choices[0].message.content.strip().upper():
+                            if "PUBLIC" in publicity_response.upper():
                                 deployment_prompt = get_prompt(KNOWLEDGE_BASE, 'classifier_deployment', summary=eng_note.get("Summary", ""))
-                                dep_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": deployment_prompt}], max_tokens=10, temperature=0)
-                                eng_note['Deployment'] = dep_response.choices[0].message.content.strip()
+                                eng_note['Deployment'] = call_ai_provider(deployment_prompt, api_key, ai_provider, hf_model_id=hf_model_id)
 
                                 if is_public_api_update(eng_note, KNOWLEDGE_BASE):
                                     eng_note['Category'] = 'Public APIs'
                                 else:
                                     categorizer_prompt = get_prompt(KNOWLEDGE_BASE, 'categorizer', company_name=KNOWLEDGE_BASE['company_name'], categories_json=json.dumps(KNOWLEDGE_BASE['product_categories'], indent=2), summary=eng_note.get("Summary", ""), description=(eng_note.get("Description", "") or "")[:300])
-                                    cat_response = client.chat.completions.create(model="gpt-4o", response_format={"type": "json_object"}, messages=[{"role": "user", "content": categorizer_prompt}])
-                                    eng_note['Category'] = json.loads(cat_response.choices[0].message.content).get('category', 'Other')
+                                    # --- [MODIFIED] Use new AI caller function, expecting JSON ---
+                                    cat_response_text = call_ai_provider(categorizer_prompt, api_key, ai_provider, hf_model_id=hf_model_id, expect_json=(ai_provider == "OpenAI"))
+                                    cat_json = json.loads(cat_response_text)
+                                    eng_note['Category'] = cat_json.get('category', 'Other')
 
                                 public_items_raw.append(eng_note)
                         except Exception as e:
@@ -248,9 +279,8 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
         st.info(f"You have selected **{len(approved_df)}** items to include in the release notes.")
 
         if st.button("2️⃣ Generate Document for Approved Items", type="primary", use_container_width=True):
-            if not api_key: st.error("Please enter your OpenAI API key.")
+            if not api_key: st.error("Please enter your API key.")
             else:
-                client = openai.OpenAI(api_key=api_key)
                 features_by_category, bugs_by_category = defaultdict(list), defaultdict(list)
                 progress_bar = st.progress(0, text="Writing Final Notes...")
 
@@ -268,8 +298,8 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                         note_json=json.dumps(eng_note, indent=2), user_roles=user_roles, task_instruction=task_instruction)
 
                     try:
-                        writer_response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": writer_prompt}])
-                        suggestion = writer_response.choices[0].message.content.strip()
+                        # --- [MODIFIED] Use new AI caller function ---
+                        suggestion = call_ai_provider(writer_prompt, api_key, ai_provider, hf_model_id=hf_model_id)
                         
                         final_note_text = suggestion
                         deployment_type = row.get('Deployment', 'Both')
