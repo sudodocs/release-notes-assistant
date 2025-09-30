@@ -37,7 +37,7 @@ def call_ai_provider(prompt, api_key, provider, model_name="gpt-4o", hf_model_id
     try:
         if provider == "Google Gemini":
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-1.5-flash-001') # Using stable version
+            model = genai.GenerativeModel('gemini-2.5-flash') # Using stable version
             response = model.generate_content(prompt)
             return response.text.strip()
             
