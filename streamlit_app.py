@@ -32,13 +32,12 @@ def get_prompt(kb, template_name, **kwargs):
         template = template.replace(f"{{{key}}}", str(value))
     return template
 
-# --- [NEW] Centralized AI Provider function ---
 def call_ai_provider(prompt, api_key, provider, model_name="gpt-4o", hf_model_id=None, expect_json=False):
     """Calls the selected AI provider and returns the response text."""
     try:
         if provider == "Google Gemini":
             genai.configure(api_key=api_key)
-            model = genai.GenerativeModel('gemini-2.5-flash')
+            model = genai.GenerativeModel('gemini-1.5-flash-001') # Using stable version
             response = model.generate_content(prompt)
             return response.text.strip()
             
@@ -108,7 +107,6 @@ def convert_md_to_rst(md_text, release_version):
     """
     toc_entries = []
     
-    # Generate Table of Contents Entries
     features_section_match = re.search(r'(.*?)## Bug Fixes', md_text, re.DOTALL)
     features_section = features_section_match.group(1) if features_section_match else md_text
     feature_headers = re.findall(r"### (.*)", features_section)
@@ -125,7 +123,6 @@ def convert_md_to_rst(md_text, release_version):
     if '## Bug Fixes' in md_text:
         toc_entries.append(create_toc_entry("Bug Fixes"))
 
-    # Define Header Conversion Functions
     def header_replacer_with_label(match, level):
         header = match.group(1).strip()
         sanitized_title = re.sub(r'[^\w\s-]', '', header).strip().lower().replace(' ', '-')
@@ -140,7 +137,6 @@ def convert_md_to_rst(md_text, release_version):
         underline_char = {2: '-', 3: '~'}.get(level, '')
         return f"\n{header}\n{underline_char*len(header)}\n"
 
-    # Process Markdown in Sections
     bug_fixes_heading = "## Bug Fixes"
     if bug_fixes_heading in md_text:
         parts = md_text.split(bug_fixes_heading, 1)
@@ -180,23 +176,17 @@ def convert_md_to_rst(md_text, release_version):
 # --- Main Application Logic ---
 st.title("Intelligent Release Notes Assistant")
 
-# Initialize session state
 if 'processed_data' not in st.session_state: st.session_state.processed_data = None
 if 'final_report_md' not in st.session_state: st.session_state.final_report_md = None
 if 'final_report_rst' not in st.session_state: st.session_state.final_report_rst = None
 
-# --- [MODIFIED] Configuration Section ---
 with st.expander("⚙️ **Configuration**", expanded=True):
     st.info("Please select your AI provider, provide an API key, the URL to your knowledge base, and the release details.")
-    
     ai_provider = st.selectbox("Choose AI Provider", ["OpenAI", "Google Gemini", "Hugging Face"])
-    
     api_key_label = "API Key"
     if ai_provider == "Hugging Face":
         api_key_label = "Hugging Face User Access Token"
-    
     api_key = st.text_input(f"Enter your {api_key_label}", type="password")
-    
     hf_model_id = None
     if ai_provider == "Hugging Face":
         hf_model_id = st.text_input("Enter Hugging Face Model ID", help="e.g., mistralai/Mistral-7B-Instruct-v0.2")
@@ -226,8 +216,7 @@ with st.container(border=True):
                 all_dfs = {"Epics": pd.read_csv(epics_csv).fillna(''), "Stories": pd.read_csv(stories_csv).fillna(''), "Bugs": pd.read_csv(bugs_csv).fillna(''), "Escalations": pd.read_csv(escalations_csv).fillna('')}
                 progress_bar = st.progress(0)
                 total_rows = sum(len(df) for df in all_dfs.values())
-                processed_rows = 0
-                public_items_raw = []
+                processed_rows, public_items_raw = 0, []
 
                 for name, df in all_dfs.items():
                     for index, row in df.iterrows():
@@ -235,9 +224,9 @@ with st.container(border=True):
                         progress_bar.progress(processed_rows / total_rows, text=f"Processing {name}: {row.get('Summary', '')[:30]}...")
                         eng_note = row.to_dict()
 
+                        # --- [MODIFIED] Added more robust outer try/except block ---
                         try:
                             publicity_prompt = get_prompt(KNOWLEDGE_BASE, 'classifier_publicity', summary=eng_note.get("Summary", ""), issue_type=eng_note.get("Issue Type", ""))
-                            # --- [MODIFIED] Use new AI caller function ---
                             publicity_response = call_ai_provider(publicity_prompt, api_key, ai_provider, hf_model_id=hf_model_id)
                             
                             if "PUBLIC" in publicity_response.upper():
@@ -248,10 +237,21 @@ with st.container(border=True):
                                     eng_note['Category'] = 'Public APIs'
                                 else:
                                     categorizer_prompt = get_prompt(KNOWLEDGE_BASE, 'categorizer', company_name=KNOWLEDGE_BASE['company_name'], categories_json=json.dumps(KNOWLEDGE_BASE['product_categories'], indent=2), summary=eng_note.get("Summary", ""), description=(eng_note.get("Description", "") or "")[:300])
-                                    # --- [MODIFIED] Use new AI caller function, expecting JSON ---
                                     cat_response_text = call_ai_provider(categorizer_prompt, api_key, ai_provider, hf_model_id=hf_model_id, expect_json=(ai_provider == "OpenAI"))
-                                    cat_json = json.loads(cat_response_text)
-                                    eng_note['Category'] = cat_json.get('category', 'Other')
+                                    
+                                    # --- [MODIFIED] Added robust check for JSON response ---
+                                    if cat_response_text:
+                                        try:
+                                            # Clean the response text in case of markdown code blocks
+                                            clean_text = re.sub(r'```json\s*|\s*```', '', cat_response_text)
+                                            cat_json = json.loads(clean_text)
+                                            eng_note['Category'] = cat_json.get('category', 'Other')
+                                        except json.JSONDecodeError:
+                                            st.warning(f"Failed to decode JSON for '{eng_note.get('Summary')}'. Assigning 'Other'. Response: '{cat_response_text}'")
+                                            eng_note['Category'] = 'Other'
+                                    else:
+                                        st.warning(f"Received empty categorization response for '{eng_note.get('Summary')}'. Assigning 'Other'.")
+                                        eng_note['Category'] = 'Other'
 
                                 public_items_raw.append(eng_note)
                         except Exception as e:
@@ -289,7 +289,6 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                     eng_note, style = row.to_dict(), KNOWLEDGE_BASE['writing_style_guide']
                     issue_type, category = eng_note.get("Issue Type", "Feature").lower(), eng_note.get('Category', 'Other')
                     task_instruction = style['bug_fix_writing']['instruction'] if "bug" in issue_type or "escalation" in issue_type else style['feature_enhancement_writing']['instruction']
-                    
                     user_roles = get_api_user_roles(eng_note, KNOWLEDGE_BASE) if category == "Public APIs" else "Not Applicable"
 
                     writer_prompt = get_prompt(KNOWLEDGE_BASE, 'writer', company_name=KNOWLEDGE_BASE['company_name'], category=category,
@@ -298,9 +297,7 @@ if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
                         note_json=json.dumps(eng_note, indent=2), user_roles=user_roles, task_instruction=task_instruction)
 
                     try:
-                        # --- [MODIFIED] Use new AI caller function ---
                         suggestion = call_ai_provider(writer_prompt, api_key, ai_provider, hf_model_id=hf_model_id)
-                        
                         final_note_text = suggestion
                         deployment_type = row.get('Deployment', 'Both')
                         deployment_map = KNOWLEDGE_BASE.get('deployment_text_mapping', {})
