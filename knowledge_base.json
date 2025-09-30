@@ -12,6 +12,37 @@
       "bugs": "Bug Fixes"
     }
   },
+  "public_api_details": {
+    "instruction": "An engineering note is considered a Public API update if its summary or description contains any of the following keywords or matches any of the endpoint patterns.",
+    "keywords": [
+      "Catalog API",
+      "User Management API",
+      "Custom Fields API",
+      "Lineage V2 API",
+      "Policy APIs",
+      "Query APIs",
+      "Data Source Management API",
+      "V1 Catalog Update API",
+      "REST API",
+      "GraphQL API"
+    ],
+    "endpoint_patterns": [
+      "^/api/v1/",
+      "^/api/v2/",
+      "^/gateway/v1/",
+      "^/graphql/"
+    ],
+    "role_mapping": {
+      "User Management API": "Server & User Admins",
+      "Custom Fields API": "Server Admins, Catalog Admins",
+      "Lineage V2 API": "Data Stewards, Data Engineers",
+      "Policy APIs": "Data Stewards, Data Owners",
+      "Data Source Management API": "Server Admins",
+      "Query APIs": "Data Analysts, Data Scientists",
+      "Catalog API": "All users with API privileges"
+    },
+    "default_user_roles": "API Developers and Administrators"
+  },
   "product_categories": {
     "Content Experience": {
       "description": "Features related to how users create, view, and manage documentation and curated content.",
@@ -71,14 +102,10 @@
     "feature_enhancement_writing": { "instruction": "Create a short, descriptive title from the 'Summary' and format it as bold text on its own line (e.g., '**My Feature Title**'). On the next line, write a clear, non-bolded, benefit-oriented paragraph. The entire entry must end with the Jira key in parentheses." },
     "bug_fix_writing": { "instruction": "Your task is to write a concise bug fix description, which can be one or two sentences long. \n\n**Sentence 1:** The first sentence MUST start with '- Fixed an issue where' and describe the core problem that was solved. Synthesize information from the 'Summary' and 'Description' to create this sentence. \n\n**Sentence 2 (Optional):** You may add a second sentence ONLY IF it provides new information about the resolution, outcome, or a direct user benefit. Do not add a second sentence if it just rephrases the problem. \n\n**Rules:** \n- Do not create a separate bolded title. The entire output must be a single bullet point. \n- Do not be redundant. Merge the summary and description into a coherent statement. \n- The entire entry must end with the Jira key in parentheses. \n\n**Example 1 (One Sentence):** '- Fixed an issue where search results displayed deleted columns because the index was not updated correctly. (JIRA-456)' \n\n**Example 2 (Two Sentences):** '- Fixed an issue where clearing domain filters did not work under Federated Catalog. This correction ensures users can now effectively reset filters, improving workflow efficiency. (JIRA-789)'" }
   },
-  "cloud_native_identifier": {
-      "instruction": "If the engineering note's summary or description contains phrases like 'Alation Cloud Service', 'ACS', or 'cloud-only', the feature is cloud-native.",
-      "suffix_to_add": "(Alation Cloud Service)"
-  },
   "prompt_templates": {
       "classifier_publicity": "Analyze the ticket based on its **ultimate outcome** for the end-user. Backend work is PUBLIC if the result is a new capability, a noticeable performance improvement, or a fixed bug.\nTicket Data: {{ \"Summary\": \"{summary}\", \"Issue Type\": \"{issue_type}\" }}\nIs this change PUBLIC or INTERNAL? Respond with a single word.",
       "classifier_deployment": "Analyze the engineering note to determine its deployment model.\n- **Cloud Only**: Mentions 'Alation Cloud Service', 'ACS', or is a feature that cannot exist on-prem.\n- **On-Premise Only**: Mentions 'server installation', 'update pack', 'RPM'.\n- **Both**: If it mentions both, or is a general product feature, classify it as 'Both'.\nTicket Data: Summary: {summary}\nYour response must be one of: Cloud Only, On-Premise Only, or Both.",
       "categorizer": "You are an expert AI classifier for {company_name}, a data intelligence platform. Your task is to categorize a given engineering note (from Jira) into ONE of the predefined product categories. The note contains a summary and a description of the work done. Analyze the content and determine the most appropriate primary category from the list provided. Do not invent new categories. If no category fits well, you MUST use 'Other'. Your output MUST be a JSON object with a single key, 'category'.\n\n### Product Categories:\n{categories_json}\n\n### Engineering Note:\nSummary: {summary}\nDescription: {description}\n\n### Your Response (JSON):\n",
-      "writer": "You are an expert technical writer for {company_name}, crafting release notes for a sophisticated data intelligence platform.\nYour audience consists of data engineers, data analysts, IT administrators, and business stakeholders.\nYour tone must be professional, clear, and concise. Avoid jargon where possible, but use correct technical terminology when necessary.\n\n**RULES:**\n1. **TONE:** {professional_tone_rule}\n2. **TERMINOLOGY:** Adhere strictly to these rules: {terminology_rules_json}\n3. **CATEGORY-SPECIFIC INSTRUCTIONS:** {category_specific_instruction}\n4. **FORMAT:** Start the note with a bolded, descriptive title that rephrases the engineering summary for a business audience. Follow with a 1-2 sentence description of the feature or fix. The description should focus on the user benefit or the problem solved. End the note with the Jira key in parentheses, like `(JIRA-123)`.\n6. **NO HALLUCINATION:** Do not invent features or functionality not mentioned in the engineering note.\n\n**TASK:**\nBased on the rules above, write a public-facing release note for the following engineering item.\n\n**ENGINEERING NOTE (JSON):**\n{note_json}\n\n**INSTRUCTION FOR THIS NOTE:**\n{task_instruction}\n\n**YOUR RELEASE NOTE (MARKDOWN):**\n"
+      "writer": "You are an expert technical writer for {company_name}, crafting release notes for a sophisticated data intelligence platform.\nYour audience consists of data engineers, data analysts, IT administrators, and business stakeholders.\nYour tone must be professional, clear, and concise. Avoid jargon where possible, but use correct technical terminology when necessary.\n\n**RULES:**\n1. **TONE:** {professional_tone_rule}\n2. **TERMINOLOGY:** Adhere strictly to these rules: {terminology_rules_json}\n3. **CATEGORY-SPECIFIC INSTRUCTIONS:** {category_specific_instruction}\n4. **AUDIENCE CONTEXT:** An 'Applicable User Roles' value may be provided. If this value is specific (i.e., not the default 'API Developers and Administrators'), you should include a sentence in your description that mentions them, such as '*This change is most relevant for [Role 1] and [Role 2].*' Do not mention the roles if the default value is provided.\n5. **FORMAT:** Start the note with a bolded, descriptive title that rephrases the engineering summary for a business audience. Follow with a 1-2 sentence description of the feature or fix. The description should focus on the user benefit or the problem solved. End the note with the Jira key in parentheses, like `(JIRA-123)`.\n6. **NO HALLUCINATION:** Do not invent features or functionality not mentioned in the engineering note.\n\n**TASK:**\nBased on the rules above, write a public-facing release note for the following engineering item.\n\n**ENGINEERING NOTE (JSON):**\n{note_json}\n\n**APPLICABLE USER ROLES:**\n{user_roles}\n\n**INSTRUCTION FOR THIS NOTE:**\n{task_instruction}\n\n**YOUR RELEASE NOTE (MARKDOWN):**\n"
   }
 }
