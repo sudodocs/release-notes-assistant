@@ -1,9 +1,7 @@
-streamlit==1.35.0
+streamlit
 pandas
 google-generativeai==0.7.1
-openai==1.46.1
+openai
 requests
-huggingface_hub
+huggingface-hub
 PyMuPDF
-bcrypt
-ipinfo
