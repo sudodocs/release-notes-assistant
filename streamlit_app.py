@@ -346,7 +346,6 @@ if not st.session_state.authenticated:
                 auth_url, _ = flow.authorization_url(prompt='consent')
                 st.session_state.auth_provider = 'google'
                 st.write(f"[Click here to authenticate with Google]({auth_url})")
-                # For local testing, open browser
                 if 'localhost' in st.context.get('base_url', ''):
                     webbrowser.open(auth_url)
     with col2:
@@ -361,25 +360,25 @@ if not st.session_state.authenticated:
                     webbrowser.open(auth_url)
 
     # Handle OAuth callback
-    query_params = st.experimental_get_query_params()
+    query_params = st.query_params
     if query_params.get('code'):
         try:
             if st.session_state.auth_provider == 'google':
                 flow = initialize_google_auth()
                 if flow:
-                    flow.fetch_token(code=query_params['code'][0])
+                    flow.fetch_token(code=query_params.get('code', [None])[0])
                     credentials = flow.credentials
                     user_info = requests.get("https://www.googleapis.com/oauth2/v3/userinfo", headers={"Authorization": f"Bearer {credentials.token}"}).json()
                     st.session_state.user_email = user_info.get('email')
                     st.session_state.authenticated = True
                     log_user_data(st.session_state.user_email, st.context.get('client_ip', 'Unknown'))
-                    st.experimental_set_query_params()  # Clear query params
+                    st.query_params.clear()
                     st.experimental_rerun()
             elif st.session_state.auth_provider == 'microsoft':
                 app = initialize_microsoft_auth()
                 if app:
                     result = app.acquire_token_by_authorization_code(
-                        code=query_params['code'][0],
+                        code=query_params.get('code', [None])[0],
                         scopes=["User.Read"],
                         redirect_uri="http://localhost:8501",
                         state=st.session_state.get('microsoft_state')
@@ -389,7 +388,7 @@ if not st.session_state.authenticated:
                         st.session_state.user_email = user_info.get('userPrincipalName')
                         st.session_state.authenticated = True
                         log_user_data(st.session_state.user_email, st.context.get('client_ip', 'Unknown'))
-                        st.experimental_set_query_params()
+                        st.query_params.clear()
                         st.experimental_rerun()
         except Exception as e:
             st.error(f"Authentication failed: {e}")
