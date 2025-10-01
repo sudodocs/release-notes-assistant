@@ -5,6 +5,5 @@ openai==1.46.1
 requests
 huggingface_hub
 PyMuPDF
-google-auth-oauthlib
-msal
+bcrypt
 ipinfo
