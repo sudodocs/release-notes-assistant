@@ -1,9 +1,10 @@
 streamlit
 pandas
 google-generativeai==0.7.1
-openai
+openai==1.46.1
 requests
-huggingface-hub
+huggingface_hub
 PyMuPDF
-streamlit-authenticator
+google-auth-oauthlib
+msal
 ipinfo
