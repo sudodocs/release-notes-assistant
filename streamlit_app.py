@@ -14,56 +14,85 @@ from concurrent.futures import ThreadPoolExecutor
 import copy
 import hashlib
 import ipinfo
-from google_auth_oauthlib.flow import InstalledAppFlow
-from msal import PublicClientApplication
-import webbrowser
+import sqlite3
+import bcrypt
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Interactive Release Notes Assistant", layout="wide")
 
-# --- Authentication Setup ---
-def initialize_google_auth():
-    """Initialize Google OAuth flow."""
-    try:
-        client_id = st.secrets.get("GOOGLE_CLIENT_ID")
-        client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET")
-        if not client_id or not client_secret:
-            st.error("Google OAuth credentials missing in secrets.toml.")
-            return None
-        client_config = {
-            "web": {
-                "client_id": client_id,
-                "client_secret": client_secret,
-                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-                "token_uri": "https://oauth2.googleapis.com/token",
-                "redirect_uris": ["http://localhost:8501"]
-            }
-        }
-        flow = InstalledAppFlow.from_client_config(client_config, scopes=["openid", "email"])
-        return flow
-    except Exception as e:
-        st.error(f"Google OAuth setup failed: {e}")
-        return None
+# --- Database Setup ---
+def init_db():
+    """Initialize SQLite database for users and projects."""
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        username TEXT UNIQUE NOT NULL,
+        password TEXT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    c.execute('''CREATE TABLE IF NOT EXISTS projects (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER NOT NULL,
+        project_name TEXT NOT NULL,
+        release_version TEXT NOT NULL,
+        markdown TEXT,
+        rst TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (user_id) REFERENCES users (id)
+    )''')
+    conn.commit()
+    conn.close()
 
-def initialize_microsoft_auth():
-    """Initialize Microsoft OAuth flow."""
+def register_user(username, password):
+    """Register a new user with hashed password."""
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
     try:
-        client_id = st.secrets.get("MICROSOFT_CLIENT_ID")
-        authority = "https://login.microsoftonline.com/common"
-        if not client_id:
-            st.error("Microsoft OAuth client ID missing in secrets.toml.")
-            return None
-        app = PublicClientApplication(client_id, authority=authority)
-        return app
-    except Exception as e:
-        st.error(f"Microsoft OAuth setup failed: {e}")
-        return None
+        hashed = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt())
+        c.execute("INSERT INTO users (username, password) VALUES (?, ?)", (username, hashed))
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        st.error("Username already exists.")
+        return False
+    finally:
+        conn.close()
 
-def log_user_data(email, ip_address):
-    """Log user data with hashed email and geolocation."""
+def login_user(username, password):
+    """Authenticate a user."""
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute("SELECT id, password FROM users WHERE username = ?", (username,))
+    user = c.fetchone()
+    conn.close()
+    if user and bcrypt.checkpw(password.encode('utf-8'), user[1]):
+        return user[0]
+    return None
+
+def save_project(user_id, project_name, release_version, markdown, rst):
+    """Save a project to the database."""
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute("INSERT INTO projects (user_id, project_name, release_version, markdown, rst) VALUES (?, ?, ?, ?, ?)",
+              (user_id, project_name, release_version, markdown, rst))
+    conn.commit()
+    conn.close()
+
+def load_projects(user_id):
+    """Load all projects for a user."""
+    conn = sqlite3.connect('users.db')
+    c = conn.cursor()
+    c.execute("SELECT id, project_name, release_version, markdown, rst, created_at FROM projects WHERE user_id = ?", (user_id,))
+    projects = c.fetchall()
+    conn.close()
+    return projects
+
+def log_user_data(username, ip_address):
+    """Log user data with hashed username and geolocation."""
     if 'user_data' not in st.session_state:
         st.session_state.user_data = []
-    hashed_email = hashlib.sha256(email.encode()).hexdigest()
+    hashed_username = hashlib.sha256(username.encode()).hexdigest()
     try:
         handler = ipinfo.getHandler(st.secrets.get("IPINFO_TOKEN", ""))
         details = handler.getDetails(ip_address)
@@ -71,7 +100,7 @@ def log_user_data(email, ip_address):
     except:
         location = "Unknown"
     st.session_state.user_data.append({
-        'user_id': hashed_email,
+        'user_id': hashed_username,
         'timestamp': datetime.now().isoformat(),
         'location': location
     })
@@ -329,78 +358,73 @@ async def async_write_note(row, api_key, provider, hf_model_id, kb, index, total
         return None
 
 # --- Main Application Logic ---
+init_db()  # Initialize database
+
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
-    st.session_state.auth_provider = None
-    st.session_state.user_email = None
+    st.session_state.user_id = None
+    st.session_state.username = None
 
 if not st.session_state.authenticated:
     st.title("Login to Release Notes Assistant")
-    st.info("Sign in with Google or Microsoft to access the app.")
+    st.info("Log in or register to save and access your release notes projects.")
 
-    col1, col2 = st.columns(2)
-    with col1:
-        if st.button("Login with Google"):
-            flow = initialize_google_auth()
-            if flow:
-                auth_url, _ = flow.authorization_url(prompt='consent')
-                st.session_state.auth_provider = 'google'
-                st.write(f"[Click here to authenticate with Google]({auth_url})")
-                if 'localhost' in st.context.get('base_url', ''):
-                    webbrowser.open(auth_url)
-    with col2:
-        if st.button("Login with Microsoft"):
-            app = initialize_microsoft_auth()
-            if app:
-                auth_url, state = app.get_authorization_request_url(scopes=["User.Read"], redirect_uri="http://localhost:8501")
-                st.session_state.auth_provider = 'microsoft'
-                st.session_state.microsoft_state = state
-                st.write(f"[Click here to authenticate with Microsoft]({auth_url})")
-                if 'localhost' in st.context.get('base_url', ''):
-                    webbrowser.open(auth_url)
+    tab1, tab2 = st.tabs(["Login", "Register"])
 
-    # Handle OAuth callback
-    query_params = st.query_params
-    if query_params.get('code'):
-        try:
-            if st.session_state.auth_provider == 'google':
-                flow = initialize_google_auth()
-                if flow:
-                    flow.fetch_token(code=query_params.get('code', [None])[0])
-                    credentials = flow.credentials
-                    user_info = requests.get("https://www.googleapis.com/oauth2/v3/userinfo", headers={"Authorization": f"Bearer {credentials.token}"}).json()
-                    st.session_state.user_email = user_info.get('email')
+    with tab1:
+        with st.form("login_form"):
+            username = st.text_input("Username")
+            password = st.text_input("Password", type="password")
+            login_button = st.form_submit_button("Login")
+            if login_button:
+                user_id = login_user(username, password)
+                if user_id:
                     st.session_state.authenticated = True
-                    log_user_data(st.session_state.user_email, st.context.get('client_ip', 'Unknown'))
-                    st.query_params.clear()
+                    st.session_state.user_id = user_id
+                    st.session_state.username = username
+                    log_user_data(username, st.context.get('client_ip', 'Unknown'))
+                    st.success(f"Welcome, {username}!")
                     st.experimental_rerun()
-            elif st.session_state.auth_provider == 'microsoft':
-                app = initialize_microsoft_auth()
-                if app:
-                    result = app.acquire_token_by_authorization_code(
-                        code=query_params.get('code', [None])[0],
-                        scopes=["User.Read"],
-                        redirect_uri="http://localhost:8501",
-                        state=st.session_state.get('microsoft_state')
-                    )
-                    if 'access_token' in result:
-                        user_info = requests.get("https://graph.microsoft.com/v1.0/me", headers={"Authorization": f"Bearer {result['access_token']}"}).json()
-                        st.session_state.user_email = user_info.get('userPrincipalName')
-                        st.session_state.authenticated = True
-                        log_user_data(st.session_state.user_email, st.context.get('client_ip', 'Unknown'))
-                        st.query_params.clear()
-                        st.experimental_rerun()
-        except Exception as e:
-            st.error(f"Authentication failed: {e}")
+                else:
+                    st.error("Invalid username or password.")
+
+    with tab2:
+        with st.form("register_form"):
+            new_username = st.text_input("New Username")
+            new_password = st.text_input("New Password", type="password")
+            register_button = st.form_submit_button("Register")
+            if register_button:
+                if register_user(new_username, new_password):
+                    st.success("Registration successful! Please log in.")
+                else:
+                    st.error("Registration failed. Try a different username.")
 
 else:
     st.title("Intelligent Release Notes Assistant")
-    st.sidebar.write(f"Logged in as: {st.session_state.user_email}")
+    st.sidebar.write(f"Logged in as: {st.session_state.username}")
     if st.sidebar.button("Logout"):
         st.session_state.authenticated = False
-        st.session_state.auth_provider = None
-        st.session_state.user_email = None
+        st.session_state.user_id = None
+        st.session_state.username = None
         st.experimental_rerun()
+
+    # Project Management
+    with st.expander("📁 Your Projects", expanded=True):
+        projects = load_projects(st.session_state.user_id)
+        if projects:
+            st.subheader("Saved Projects")
+            project_options = [f"{p[2]} - {p[1]} ({p[5]})" for p in projects]
+            selected_project = st.selectbox("Select a project to load", [""] + project_options)
+            if selected_project:
+                project_id = int(selected_project.split(" - ")[1].split(" ")[0])
+                for p in projects:
+                    if p[0] == project_id:
+                        st.session_state.final_report_md = p[3]
+                        st.session_state.final_report_rst = p[4]
+                        st.success(f"Loaded project: {p[1]}")
+                        break
+        else:
+            st.info("No projects saved yet.")
 
     # Initialize KB Template
     if 'kb_template' not in st.session_state:
@@ -462,10 +486,10 @@ else:
     with st.expander("⚙️ Configuration", expanded=True):
         st.info("Select AI provider, provide API key, and enter release details.")
         ai_provider = st.selectbox("Choose AI Provider", ["OpenAI", "Google Gemini", "Hugging Face"])
-        api_key_label = "API Key"
-        if ai_provider == "Hugging Face":
-            api_key_label = "Hugging Face User Access Token"
-        api_key = st.text_input(f"Enter your {api_key_label}", type="password")
+        api_key = st.secrets.get(f"{ai_provider.upper().replace(' ', '_')}_API_KEY", "")
+        if not api_key:
+            st.error(f"API key for {ai_provider} not configured. Contact the app administrator.")
+            st.stop()
         hf_model_id = None
         if ai_provider == "Hugging Face":
             hf_model_id = st.text_input("Enter Hugging Face Model ID", help="e.g., mistralai/Mistral-7B-Instruct-v0.2")
@@ -476,6 +500,7 @@ else:
         with col1: release_version = st.text_input("Release Version", "2025.3.1")
         with col2: build_number = st.text_input("Build Number", "2409")
         with col3: release_date = st.text_input("Release Date", "September 28, 2025")
+        project_name = st.text_input("Project Name", f"Release {release_version}")
 
     KNOWLEDGE_BASE = load_knowledge_base(kb_url) if kb_url else None
     if llms_url and KNOWLEDGE_BASE:
@@ -494,7 +519,7 @@ else:
         if all([epics_csv, stories_csv, bugs_csv, escalations_csv]):
             if st.button("1️⃣ Triage & Categorize Items", type="primary", use_container_width=True):
                 if not api_key or not KNOWLEDGE_BASE:
-                    st.error("Please provide an API Key and a valid Knowledge Base URL.")
+                    st.error("Please provide a valid Knowledge Base URL.")
                 else:
                     with st.spinner("Processing tickets..."):
                         all_dfs = {
@@ -541,7 +566,7 @@ else:
 
             if st.button("2️⃣ Generate Document for Approved Items", type="primary", use_container_width=True):
                 if not api_key:
-                    st.error("Please enter your API key.")
+                    st.error("API key not configured. Contact the app administrator.")
                 else:
                     with st.spinner("Generating release notes..."):
                         features_by_category, bugs_by_category = defaultdict(list), defaultdict(list)
@@ -582,7 +607,8 @@ else:
                                 report_parts.append(f"\n### {cat_key}\n{notes}")
                         st.session_state.final_report_md = "\n".join(report_parts)
                         st.session_state.final_report_rst = convert_md_to_rst(st.session_state.final_report_md, release_version)
-                        st.success("✅ Release notes document generated successfully!")
+                        save_project(st.session_state.user_id, project_name, release_version, st.session_state.final_report_md, st.session_state.final_report_rst)
+                        st.success(f"✅ Release notes generated and saved as project: {project_name}")
 
     # Step 3: Download
     if st.session_state.get('final_report_md'):
@@ -609,10 +635,10 @@ else:
                     use_container_width=True
                 )
 
-    # User Stats
+    # User Stats (Admin Only)
     with st.expander("📊 User Statistics (Admin Only)"):
         if st.session_state.get('user_data'):
-            st.write(f"Total Users: {len(set(d['user_id'] for d in st.session_state.user_data))}")
+            st.write(f"Total Registered Users: {len(set(d['user_id'] for d in st.session_state.user_data))}")
             st.write("Recent Logins:")
             for data in st.session_state.user_data[-10:]:
                 st.write(f"User (hashed): {data['user_id'][:8]}..., Time: {data['timestamp']}, Location: {data['location']}")
