@@ -9,28 +9,58 @@ from collections import defaultdict
 import re
 import io
 import requests
-import streamlit_authenticator as stauth
-import hashlib
-import ipinfo
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-import time
 import copy
+import hashlib
+import ipinfo
+from google_auth_oauthlib.flow import InstalledAppFlow
+from msal import PublicClientApplication
+import webbrowser
 
 # --- Page Configuration ---
 st.set_page_config(page_title="Interactive Release Notes Assistant", layout="wide")
 
 # --- Authentication Setup ---
-def initialize_auth():
-    config = {
-        'credentials': {'usernames': {}},  # Dynamically populated
-        'cookie': {'name': 'release_notes_app', 'key': 'random_key_123', 'expiry_days': 1},
-        'preauthorized': {}
-    }
-    return stauth.Authenticate(config, 'release_notes_app', 'random_key_123', 1)
+def initialize_google_auth():
+    """Initialize Google OAuth flow."""
+    try:
+        client_id = st.secrets.get("GOOGLE_CLIENT_ID")
+        client_secret = st.secrets.get("GOOGLE_CLIENT_SECRET")
+        if not client_id or not client_secret:
+            st.error("Google OAuth credentials missing in secrets.toml.")
+            return None
+        client_config = {
+            "web": {
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+                "token_uri": "https://oauth2.googleapis.com/token",
+                "redirect_uris": ["http://localhost:8501"]
+            }
+        }
+        flow = InstalledAppFlow.from_client_config(client_config, scopes=["openid", "email"])
+        return flow
+    except Exception as e:
+        st.error(f"Google OAuth setup failed: {e}")
+        return None
 
-# --- User Tracking ---
+def initialize_microsoft_auth():
+    """Initialize Microsoft OAuth flow."""
+    try:
+        client_id = st.secrets.get("MICROSOFT_CLIENT_ID")
+        authority = "https://login.microsoftonline.com/common"
+        if not client_id:
+            st.error("Microsoft OAuth client ID missing in secrets.toml.")
+            return None
+        app = PublicClientApplication(client_id, authority=authority)
+        return app
+    except Exception as e:
+        st.error(f"Microsoft OAuth setup failed: {e}")
+        return None
+
 def log_user_data(email, ip_address):
+    """Log user data with hashed email and geolocation."""
     if 'user_data' not in st.session_state:
         st.session_state.user_data = []
     hashed_email = hashlib.sha256(email.encode()).hexdigest()
@@ -49,17 +79,17 @@ def log_user_data(email, ip_address):
 # --- Helper Functions ---
 @st.cache_data(ttl=3600)
 def load_knowledge_base(url):
-    """Fetches and loads a JSON knowledge base from a user-provided URL."""
+    """Fetches and loads a JSON knowledge base from a URL."""
     try:
         response = requests.get(url)
         response.raise_for_status()
         return response.json()
     except Exception as e:
-        st.error(f"Error loading Knowledge Base from URL. Please check the URL and file format. Details: {e}")
+        st.error(f"Error loading Knowledge Base: {e}")
         return None
 
 def load_llms_config(url, base_kb):
-    """Fetches and merges llms.txt from URL into the KB."""
+    """Fetches and merges llms.txt into the KB."""
     try:
         response = requests.get(url)
         response.raise_for_status()
@@ -85,7 +115,7 @@ def load_llms_config(url, base_kb):
         return base_kb
 
 def get_prompt(kb, template_name, **kwargs):
-    """Safely gets and formats a prompt from the knowledge base."""
+    """Formats a prompt from the knowledge base."""
     template = kb.get("prompt_templates", {}).get(template_name, "")
     for key, value in kwargs.items():
         template = template.replace(f"{{{key}}}", str(value))
@@ -101,14 +131,14 @@ async def async_call_ai_provider(prompt, api_key, provider, model_name="gpt-4o",
                 return result
         except Exception as e:
             if attempt < retries - 1:
-                await asyncio.sleep(2 ** attempt)  # Exponential backoff
+                await asyncio.sleep(2 ** attempt)
                 continue
             st.error(f"Failed to call {provider} after {retries} attempts: {e}")
             return ""
     return ""
 
 def call_ai_provider(prompt, api_key, provider, model_name="gpt-4o", hf_model_id=None, expect_json=False):
-    """Calls the selected AI provider and returns the response text."""
+    """Calls the selected AI provider."""
     try:
         if provider == "Google Gemini":
             genai.configure(api_key=api_key)
@@ -127,17 +157,17 @@ def call_ai_provider(prompt, api_key, provider, model_name="gpt-4o", hf_model_id
             return response.choices[0].message.content.strip()
         elif provider == "Hugging Face":
             if not hf_model_id:
-                st.warning("Hugging Face model ID is required.")
+                st.warning("Hugging Face model ID required.")
                 return ""
             client = InferenceClient(token=api_key)
             response = client.text_generation(prompt, model=hf_model_id, max_new_tokens=1024)
             return response.strip()
     except Exception as e:
-        raise e  # Handled by async wrapper
+        raise e
     return ""
 
 def is_public_api_update(eng_note, kb, summary_col='Summary', description_col='Description'):
-    """Checks if an engineering note is a public API update."""
+    """Checks if a note is a public API update."""
     api_details = kb.get("public_api_details", {})
     keywords = api_details.get("keywords", [])
     patterns = api_details.get("endpoint_patterns", [])
@@ -163,7 +193,7 @@ def get_api_user_roles(eng_note, kb, summary_col='Summary', description_col='Des
     return default_roles
 
 def convert_md_to_rst(md_text, release_version):
-    """Converts Markdown to reStructuredText with cross-references."""
+    """Converts Markdown to reStructuredText."""
     toc_entries = []
     features_section_match = re.search(r'(.*?)## Bug Fixes', md_text, re.DOTALL)
     features_section = features_section_match.group(1) if features_section_match else md_text
@@ -228,8 +258,8 @@ def convert_md_to_rst(md_text, release_version):
 
     return rst_text.strip()
 
-# --- Async Processing for Triage ---
 async def process_single_ticket(row, api_key, provider, hf_model_id, kb, summary_col='Summary', issue_type_col='Issue Type', description_col='Description'):
+    """Process a single ticket asynchronously."""
     try:
         eng_note = row.to_dict()
         publicity_prompt = get_prompt(kb, 'classifier_publicity', summary=eng_note.get(summary_col, ""), issue_type=eng_note.get(issue_type_col, ""))
@@ -260,6 +290,7 @@ async def process_single_ticket(row, api_key, provider, hf_model_id, kb, summary
         return None
 
 async def process_tickets(all_dfs, api_key, provider, hf_model_id, kb):
+    """Process all tickets in parallel."""
     tasks = []
     ticket_system = kb.get('ticket_system', {'summary_col': 'Summary', 'issue_type_col': 'Issue Type', 'description_col': 'Description'})
     for name, df in all_dfs.items():
@@ -268,29 +299,109 @@ async def process_tickets(all_dfs, api_key, provider, hf_model_id, kb):
     results = await asyncio.gather(*tasks, return_exceptions=True)
     return [r for r in results if r is not None and not isinstance(r, Exception)]
 
-# --- Main Application Logic ---
-authenticator = initialize_auth()
+async def async_write_note(row, api_key, provider, hf_model_id, kb, index, total, progress_bar, summary_col, issue_type_col, description_col):
+    """Write a release note asynchronously."""
+    try:
+        eng_note, style = row.to_dict(), kb['writing_style_guide']
+        issue_type, category = eng_note.get(issue_type_col, "Feature").lower(), eng_note.get('Category', 'Other')
+        task_instruction = style['bug_fix_writing']['instruction'] if "bug" in issue_type or "escalation" in issue_type else style['feature_enhancement_writing']['instruction']
+        user_roles = get_api_user_roles(eng_note, kb, summary_col, description_col) if category == "Public APIs" else "Not Applicable"
+        writer_prompt = get_prompt(kb, 'writer', company_name=kb['company_name'], category=category,
+            professional_tone_rule=style['professional_tone_rule'], terminology_rules_json=json.dumps(style['terminology_rules']),
+            category_specific_instruction=style['category_specific_rules'].get(category, ""),
+            note_json=json.dumps(eng_note, indent=2), user_roles=user_roles, task_instruction=task_instruction)
+        suggestion = await async_call_ai_provider(writer_prompt, api_key, provider, hf_model_id=hf_model_id)
+        final_note_text = suggestion
+        deployment_type = row.get('Deployment', 'Both')
+        deployment_map = kb.get('deployment_text_mapping', {})
+        if ("bug" in issue_type or "escalation" in issue_type) and (deployment_type in ["Cloud Only", "Both"]):
+            bug_suffix = deployment_map.get('bug_fix_cloud_suffix', '')
+            if bug_suffix:
+                final_note_text = f"{suggestion} {bug_suffix}"
+        elif not ("bug" in issue_type or "escalation" in issue_type):
+            feature_text = deployment_map.get(deployment_type, '')
+            if feature_text:
+                final_note_text += f"\n\n*{feature_text}*"
+        progress_bar.progress((index + 1) / total, text=f"Writing: {row.get(summary_col, '')[:30]}...")
+        return category, final_note_text
+    except Exception as e:
+        st.warning(f"Could not write note for {row.get(summary_col, 'Unknown')}: {e}")
+        return None
 
+# --- Main Application Logic ---
 if 'authenticated' not in st.session_state:
     st.session_state.authenticated = False
+    st.session_state.auth_provider = None
+    st.session_state.user_email = None
 
 if not st.session_state.authenticated:
     st.title("Login to Release Notes Assistant")
-    st.info("Sign in with your Google or Microsoft account to access the app.")
-    name, authentication_status, username = authenticator.login('Login', 'main')
-    if authentication_status:
-        st.session_state.authenticated = True
-        log_user_data(username, st.context.get('client_ip', 'Unknown'))
-        st.success(f"Welcome, {name}! You can now use the app.")
-        authenticator.logout('Logout', 'sidebar')
-        st.experimental_rerun()
-    elif authentication_status == False:
-        st.error('Username/password is incorrect')
-    elif authentication_status is None:
-        st.warning('Please enter your credentials')
+    st.info("Sign in with Google or Microsoft to access the app.")
+
+    col1, col2 = st.columns(2)
+    with col1:
+        if st.button("Login with Google"):
+            flow = initialize_google_auth()
+            if flow:
+                auth_url, _ = flow.authorization_url(prompt='consent')
+                st.session_state.auth_provider = 'google'
+                st.write(f"[Click here to authenticate with Google]({auth_url})")
+                # For local testing, open browser
+                if 'localhost' in st.context.get('base_url', ''):
+                    webbrowser.open(auth_url)
+    with col2:
+        if st.button("Login with Microsoft"):
+            app = initialize_microsoft_auth()
+            if app:
+                auth_url, state = app.get_authorization_request_url(scopes=["User.Read"], redirect_uri="http://localhost:8501")
+                st.session_state.auth_provider = 'microsoft'
+                st.session_state.microsoft_state = state
+                st.write(f"[Click here to authenticate with Microsoft]({auth_url})")
+                if 'localhost' in st.context.get('base_url', ''):
+                    webbrowser.open(auth_url)
+
+    # Handle OAuth callback
+    query_params = st.experimental_get_query_params()
+    if query_params.get('code'):
+        try:
+            if st.session_state.auth_provider == 'google':
+                flow = initialize_google_auth()
+                if flow:
+                    flow.fetch_token(code=query_params['code'][0])
+                    credentials = flow.credentials
+                    user_info = requests.get("https://www.googleapis.com/oauth2/v3/userinfo", headers={"Authorization": f"Bearer {credentials.token}"}).json()
+                    st.session_state.user_email = user_info.get('email')
+                    st.session_state.authenticated = True
+                    log_user_data(st.session_state.user_email, st.context.get('client_ip', 'Unknown'))
+                    st.experimental_set_query_params()  # Clear query params
+                    st.experimental_rerun()
+            elif st.session_state.auth_provider == 'microsoft':
+                app = initialize_microsoft_auth()
+                if app:
+                    result = app.acquire_token_by_authorization_code(
+                        code=query_params['code'][0],
+                        scopes=["User.Read"],
+                        redirect_uri="http://localhost:8501",
+                        state=st.session_state.get('microsoft_state')
+                    )
+                    if 'access_token' in result:
+                        user_info = requests.get("https://graph.microsoft.com/v1.0/me", headers={"Authorization": f"Bearer {result['access_token']}"}).json()
+                        st.session_state.user_email = user_info.get('userPrincipalName')
+                        st.session_state.authenticated = True
+                        log_user_data(st.session_state.user_email, st.context.get('client_ip', 'Unknown'))
+                        st.experimental_set_query_params()
+                        st.experimental_rerun()
+        except Exception as e:
+            st.error(f"Authentication failed: {e}")
+
 else:
     st.title("Intelligent Release Notes Assistant")
-    authenticator.logout('Logout', 'sidebar')
+    st.sidebar.write(f"Logged in as: {st.session_state.user_email}")
+    if st.sidebar.button("Logout"):
+        st.session_state.authenticated = False
+        st.session_state.auth_provider = None
+        st.session_state.user_email = None
+        st.experimental_rerun()
 
     # Initialize KB Template
     if 'kb_template' not in st.session_state:
@@ -309,12 +420,14 @@ else:
                 "professional_tone_rule": "Neutral and professional.",
                 "terminology_rules": {},
                 "feature_enhancement_writing": {"instruction": "Create a short, descriptive title and benefit-oriented paragraph."},
-                "bug_fix_writing": {"instruction": "Write concise bug fix descriptions starting with '- Fixed an issue where'."}
+                "bug_fix_writing": {"instruction": "Write concise bug fix descriptions starting with '- Fixed an issue where'."},
+                "category_specific_rules": {}
             },
             "prompt_templates": {
                 "classifier_publicity": "Analyze the ticket: {{ \"Summary\": \"{summary}\", \"Issue Type\": \"{issue_type}\" }} Is this PUBLIC or INTERNAL? Respond with one word.",
                 "classifier_deployment": "Determine deployment model: Summary: {summary} Respond with: Cloud Only, On-Premise Only, or Both.",
-                "categorizer": "Categorize the note for {company_name}. Categories: {categories_json}\nSummary: {summary}\nDescription: {description}\nRespond with JSON: {\"category\": \"value\"}"
+                "categorizer": "Categorize the note for {company_name}. Categories: {categories_json}\nSummary: {summary}\nDescription: {description}\nRespond with JSON: {\"category\": \"value\"}",
+                "writer": "Write a release note for {company_name} in category {category}.\nStyle: {professional_tone_rule}\nTerminology: {terminology_rules_json}\nCategory rules: {category_specific_instruction}\nNote: {note_json}\nUser roles: {user_roles}\nTask: {task_instruction}"
             }
         }
 
@@ -408,7 +521,7 @@ else:
                         st.success(f"Triage complete. Found {len(df_public)} potentially public items for your review.")
 
     # Step 2: Review
-    if st.session_state.processed_data is not None and KNOWLEDGE_BASE:
+    if st.session_state.get('processed_data') is not None and KNOWLEDGE_BASE:
         with st.container(border=True):
             st.header("Step 2: Review and Approve Items")
             st.warning("Uncheck items to exclude them. You can also correct the AI-suggested Deployment and Category.")
@@ -473,7 +586,7 @@ else:
                         st.success("✅ Release notes document generated successfully!")
 
     # Step 3: Download
-    if st.session_state.final_report_md:
+    if st.session_state.get('final_report_md'):
         with st.container(border=True):
             st.header("Step 3: Download Your Reports")
             st.markdown("### Preview (Markdown)")
@@ -506,31 +619,3 @@ else:
                 st.write(f"User (hashed): {data['user_id'][:8]}..., Time: {data['timestamp']}, Location: {data['location']}")
         else:
             st.info("No user data yet.")
-
-async def async_write_note(row, api_key, provider, hf_model_id, kb, index, total, progress_bar, summary_col, issue_type_col, description_col):
-    try:
-        eng_note, style = row.to_dict(), kb['writing_style_guide']
-        issue_type, category = eng_note.get(issue_type_col, "Feature").lower(), eng_note.get('Category', 'Other')
-        task_instruction = style['bug_fix_writing']['instruction'] if "bug" in issue_type or "escalation" in issue_type else style['feature_enhancement_writing']['instruction']
-        user_roles = get_api_user_roles(eng_note, kb, summary_col, description_col) if category == "Public APIs" else "Not Applicable"
-        writer_prompt = get_prompt(kb, 'writer', company_name=kb['company_name'], category=category,
-            professional_tone_rule=style['professional_tone_rule'], terminology_rules_json=json.dumps(style['terminology_rules']),
-            category_specific_instruction=style['category_specific_rules'].get(category, ""),
-            note_json=json.dumps(eng_note, indent=2), user_roles=user_roles, task_instruction=task_instruction)
-        suggestion = await async_call_ai_provider(writer_prompt, api_key, provider, hf_model_id=hf_model_id)
-        final_note_text = suggestion
-        deployment_type = row.get('Deployment', 'Both')
-        deployment_map = kb.get('deployment_text_mapping', {})
-        if ("bug" in issue_type or "escalation" in issue_type) and (deployment_type in ["Cloud Only", "Both"]):
-            bug_suffix = deployment_map.get('bug_fix_cloud_suffix', '')
-            if bug_suffix:
-                final_note_text = f"{suggestion} {bug_suffix}"
-        elif not ("bug" in issue_type or "escalation" in issue_type):
-            feature_text = deployment_map.get(deployment_type, '')
-            if feature_text:
-                final_note_text += f"\n\n*{feature_text}*"
-        progress_bar.progress((index + 1) / total, text=f"Writing: {row.get(summary_col, '')[:30]}...")
-        return category, final_note_text
-    except Exception as e:
-        st.warning(f"Could not write note for {row.get(summary_col, 'Unknown')}: {e}")
-        return None
