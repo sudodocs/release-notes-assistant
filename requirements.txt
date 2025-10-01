@@ -5,3 +5,5 @@ openai
 requests
 huggingface-hub
 PyMuPDF
+streamlit-authenticator
+ipinfo
