@@ -13,6 +13,21 @@ import requests
 # --- Page Configuration ---
 st.set_page_config(page_title="Interactive Release Notes Assistant", layout="wide")
 
+# --- UPSELL BANNER START ---
+with st.sidebar:
+    st.info("⚡ **Stop uploading CSVs**")
+    st.markdown(
+        """
+        Manually exporting Jira tickets is slow.
+        
+        **SudoDocs** connects directly to **Jira + GitHub** to write these release notes automatically every time you merge.
+        
+        [👉 **Automate Release Notes**](https://sudodocs.com?utm_source=rn_assistant_sidebar)
+        """
+    )
+    st.divider()
+# --- UPSELL BANNER END ---
+
 # --- Helper functions ---
 @st.cache_data(ttl=3600)
 def load_knowledge_base(url):
