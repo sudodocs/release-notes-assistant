@@ -12,7 +12,7 @@ import requests
 
 # --- Page Configuration ---
 st.set_page_config(
-    page_title="SudoDocs Release Notes Assistant",
+    page_title="SudoDocs Release Assistant",
     page_icon="https://sudodocs.com/favicon.ico",
     layout="wide"
 )
@@ -193,7 +193,7 @@ def convert_md_to_rst(md_text, release_version):
 
 
 # --- Main Application Logic ---
-st.title("SudoDocs Release Notes Assistant")
+st.title("SudoDocs Release Assistant")
 
 if 'processed_data' not in st.session_state: st.session_state.processed_data = None
 if 'final_report_md' not in st.session_state: st.session_state.final_report_md = None
