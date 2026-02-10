@@ -11,7 +11,7 @@ import io
 import requests
 
 # --- Page Configuration ---
-st.set_page_config(page_title="Interactive Release Notes Assistant", layout="wide")
+st.set_page_config(page_title="SudoDocs Release Notes Assistant", layout="wide")
 
 # --- UPSELL BANNER START ---
 with st.sidebar:
@@ -189,7 +189,7 @@ def convert_md_to_rst(md_text, release_version):
 
 
 # --- Main Application Logic ---
-st.title("Intelligent Release Notes Assistant")
+st.title("SudoDocs Release Notes Assistant")
 
 if 'processed_data' not in st.session_state: st.session_state.processed_data = None
 if 'final_report_md' not in st.session_state: st.session_state.final_report_md = None
