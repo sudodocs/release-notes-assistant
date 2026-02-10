@@ -1,4 +1,4 @@
-# Intelligent Release Notes Assistant
+# SudoDocs Release Notes Assistant
 
 [![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://sudodocs-release-notes-assistant.streamlit.app/) An intelligent Streamlit assistant that automates the generation of professional, publication-ready release notes from Jira CSV exports using a customizable AI-powered workflow.
 
