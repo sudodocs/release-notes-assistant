@@ -1,10 +1,10 @@
 {
-  "company_name": "Alation",
+  "company_name": "Org Name",
   "deployment_text_mapping": {
-    "Cloud Only": "Alation Cloud Service",
+    "Cloud Only": "Cloud Service",
     "On-Premise Only": "Customer Managed",
-    "Both": "Alation Cloud Service, Customer Managed",
-    "bug_fix_cloud_suffix": "(Alation Cloud Service)"
+    "Both": "Cloud Service, Customer Managed",
+    "bug_fix_cloud_suffix": "(Cloud Service)"
   },
   "release_structure": {
     "main_sections": {
