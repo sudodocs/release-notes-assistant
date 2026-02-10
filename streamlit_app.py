@@ -11,7 +11,11 @@ import io
 import requests
 
 # --- Page Configuration ---
-st.set_page_config(page_title="SudoDocs Release Notes Assistant", layout="wide")
+st.set_page_config(
+    page_title="SudoDocs Release Notes Assistant",
+    page_icon="https://sudodocs.com/favicon.ico",
+    layout="wide"
+)
 
 # --- UPSELL BANNER START ---
 with st.sidebar:
